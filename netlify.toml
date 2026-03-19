@@ -1,0 +1,5 @@
+# O site estático vive em web/; a raiz do repo não tem index.html.
+[build]
+  # Só front estático neste artefacto; evita depender de Python/Rust no build.
+  command = "true"
+  publish = "web"
