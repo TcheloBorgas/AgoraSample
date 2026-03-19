@@ -18,7 +18,10 @@ IntentName = Literal[
 
 
 class MeetingDraft(BaseModel):
-    title: str = "Reuniao"
+    """Campos parciais de um agendamento (nome, e-mail, assunto, data/hora)."""
+    title: str | None = None
+    organizer_name: str | None = None
+    organizer_email: str | None = None
     start: datetime | None = None
     end: datetime | None = None
     duration_minutes: int = 30
@@ -33,5 +36,6 @@ class ConversationState(BaseModel):
     language: Literal["pt", "en", "es"] = "pt"
     short_memory: list[dict] = Field(default_factory=list)
     pending_confirmation: dict | None = None
+    meeting_draft: MeetingDraft | None = None
     last_intent: IntentName = "unknown"
     updated_at: datetime = Field(default_factory=datetime.utcnow)

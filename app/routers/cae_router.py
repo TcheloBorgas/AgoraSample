@@ -205,12 +205,13 @@ def _tool_definitions() -> list[dict[str, Any]]:
         },
         {
             "name": "list_events",
-            "description": "Lists events by date/query.",
+            "description": "Lists events by date/query. Use span=week for the full calendar week (Mon-Sun) containing date.",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "date": {"type": "string"},
                     "query": {"type": "string"},
+                    "span": {"type": "string", "description": "day (default) or week"},
                 },
             },
         },
