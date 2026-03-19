@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from app.adapters.agora_cae_client import AgoraConversationalAIClient
+from app.core.config import settings
+
+
+@dataclass
+class AgentSession:
+    session_id: str
+    agent_id: str
+    status: str
+    channel: str
+    remote_uid: str
+    started_at: datetime
+
+
+class CAEService:
+    def __init__(self, client: AgoraConversationalAIClient) -> None:
+        self.client = client
+        self._sessions: dict[str, AgentSession] = {}
+
+    async def start_agent_for_session(
+        self,
+        session_id: str,
+        channel: str,
+        token: str,
+        remote_uid: str,
+        language: str = "pt-BR",
+    ) -> AgentSession:
+        if session_id in self._sessions and self._sessions[session_id].status in {"RUNNING", "STARTING", "IDLE"}:
+            return self._sessions[session_id]
+
+        payload = self._build_join_payload(session_id, channel, token, remote_uid, language)
+        response = await self.client.start_agent(payload)
+        session = AgentSession(
+            session_id=session_id,
+            agent_id=response["agent_id"],
+            status=response.get("status", "STARTING"),
+            channel=channel,
+            remote_uid=remote_uid,
+            started_at=datetime.utcnow(),
+        )
+        self._sessions[session_id] = session
+        return session
+
+    async def stop_agent_for_session(self, session_id: str) -> dict[str, Any]:
+        session = self._sessions.get(session_id)
+        if not session:
+            return {"stopped": False, "reason": "agent_not_found"}
+        await self.client.stop_agent(session.agent_id)
+        session.status = "STOPPED"
+        return {"stopped": True, "agent_id": session.agent_id}
+
+    def get_session_status(self, session_id: str) -> dict[str, Any]:
+        session = self._sessions.get(session_id)
+        if not session:
+            return {"exists": False}
+        return {
+            "exists": True,
+            "session_id": session.session_id,
+            "agent_id": session.agent_id,
+            "status": session.status,
+            "channel": session.channel,
+            "remote_uid": session.remote_uid,
+            "started_at": session.started_at.isoformat(),
+        }
+
+    def _build_join_payload(
+        self,
+        session_id: str,
+        channel: str,
+        token: str,
+        remote_uid: str,
+        language: str,
+    ) -> dict[str, Any]:
+        name = f"{settings.agora_cae_agent_name_prefix}-{session_id}-{int(time.time())}"
+        llm_config = self._build_llm_config(session_id)
+
+        properties: dict[str, Any] = {
+            "channel": channel,
+            "token": token,
+            "agent_rtc_uid": str(settings.agora_cae_agent_uid),
+            "remote_rtc_uids": [str(remote_uid)],
+            "idle_timeout": 0,
+            "llm": llm_config,
+            "asr": {
+                "language": language,
+                "vendor": "ares",
+                "params": {},
+            },
+            "tts": self._build_tts_config(language),
+            "advanced_features": {
+                "enable_rtm": False,
+                "enable_tools": settings.agora_cae_enable_tools,
+            },
+        }
+
+        if settings.agora_cae_enable_tools and settings.agora_cae_mcp_endpoint:
+            properties["llm"]["mcp_servers"] = [
+                {
+                    "name": "scheduler",
+                    "endpoint": settings.agora_cae_mcp_endpoint,
+                    "transport": "streamable_http",
+                    "allowed_tools": [
+                        "check_availability",
+                        "create_calendar_event",
+                        "list_events",
+                        "reschedule_event",
+                        "cancel_event",
+                        "suggest_time_slots",
+                    ],
+                    "timeout_ms": 12000,
+                }
+            ]
+
+        return {"name": name, "properties": properties}
+
+    def _build_llm_config(self, session_id: str) -> dict[str, Any]:
+        if settings.agora_cae_external_llm_url:
+            return {
+                "vendor": "custom",
+                "style": "openai",
+                "url": settings.agora_cae_external_llm_url,
+                "api_key": settings.agora_cae_external_llm_api_key,
+                "system_messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a bilingual scheduling assistant. Confirm critical actions before execution. "
+                            "Prefer concise, natural answers in user language."
+                        ),
+                    }
+                ],
+                "params": {"model": "local-scheduler-agent"},
+            }
+
+        if not settings.agora_cae_public_base_url:
+            raise RuntimeError(
+                "AGORA_CAE_PUBLIC_BASE_URL nao configurado. "
+                "Expose o backend com ngrok/cloudflared e defina a URL publica para callback do LLM."
+            )
+
+        callback_url = f"{settings.agora_cae_public_base_url.rstrip('/')}/api/cae/llm?session_id={session_id}"
+        return {
+            "vendor": "custom",
+            "style": "openai",
+            "url": callback_url,
+            "api_key": "",
+            "system_messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are a voice meeting assistant connected to Google Calendar and MongoDB memory. "
+                        "Always confirm create/reschedule/cancel actions."
+                    ),
+                }
+            ],
+            "params": {"model": "local-scheduler-agent"},
+        }
+
+    def _build_tts_config(self, language: str) -> dict[str, Any]:
+        vendor = settings.agora_cae_tts_vendor.lower()
+
+        if vendor == "openai":
+            if not settings.agora_cae_tts_openai_key:
+                raise RuntimeError("AGORA_CAE_TTS_OPENAI_KEY nao configurado.")
+            return {
+                "vendor": "openai",
+                "params": {
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": settings.agora_cae_tts_openai_key,
+                    "model": settings.agora_cae_tts_openai_model,
+                    "voice": settings.agora_cae_tts_openai_voice,
+                    "instructions": (
+                        "Speak in Brazilian Portuguese with a warm, professional tone."
+                        if language.startswith("pt")
+                        else "Speak in standard American English with a natural, friendly tone."
+                    ),
+                    "speed": 1,
+                },
+            }
+
+        if vendor == "elevenlabs":
+            if not settings.agora_cae_tts_elevenlabs_key:
+                raise RuntimeError("AGORA_CAE_TTS_ELEVENLABS_KEY nao configurado.")
+            return {
+                "vendor": "elevenlabs",
+                "params": {
+                    "base_url": "wss://api.elevenlabs.io/v1",
+                    "key": settings.agora_cae_tts_elevenlabs_key,
+                    "model_id": settings.agora_cae_tts_elevenlabs_model_id,
+                    "voice_id": settings.agora_cae_tts_elevenlabs_voice_id,
+                    "sample_rate": 24000,
+                },
+            }
+
+        if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
+            raise RuntimeError(
+                "AGORA_CAE_TTS_AZURE_KEY/AGORA_CAE_TTS_AZURE_REGION nao configurados. "
+                "Configure credenciais Azure Speech ou troque AGORA_CAE_TTS_VENDOR para 'openai' ou 'elevenlabs'."
+            )
+        return {
+            "vendor": "microsoft",
+            "params": {
+                "key": settings.agora_cae_tts_azure_key,
+                "region": settings.agora_cae_tts_azure_region,
+                "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
+            },
+        }

@@ -1,0 +1,16 @@
+.env
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+data/
+*.json
+!package.json
+!tsconfig.json
+key_and_secret.txt
+client_secret_*.json
+credentials.json
+*.log
+.DS_Store
+Thumbs.db

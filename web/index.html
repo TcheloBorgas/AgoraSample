@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Voice Scheduling Assistant</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              bg: {
+                primary: "#0B1020",
+                elevated: "#121A2B",
+                overlay: "rgba(9,14,26,0.72)",
+              },
+              text: {
+                primary: "#E8EEF9",
+                secondary: "#C7D2E8",
+                muted: "#93A2C0",
+              },
+              border: {
+                subtle: "#25314A",
+                strong: "#334668",
+              },
+              accent: {
+                primary: "#5B8CFF",
+                secondary: "#7A5CFF",
+              },
+              state: {
+                success: "#22C55E",
+                warning: "#F59E0B",
+                error: "#EF4444",
+              },
+            },
+            boxShadow: {
+              soft: "0 2px 8px rgba(0,0,0,0.2)",
+              card: "0 8px 24px rgba(0,0,0,0.28)",
+              floating: "0 16px 40px rgba(0,0,0,0.35)",
+            },
+            keyframes: {
+              fadeInUp: {
+                "0%": { opacity: "0", transform: "translateY(6px)" },
+                "100%": { opacity: "1", transform: "translateY(0)" },
+              },
+              pulseSoft: {
+                "0%,100%": { transform: "scale(1)", opacity: "0.8" },
+                "50%": { transform: "scale(1.08)", opacity: "1" },
+              },
+            },
+            animation: {
+              "fade-in-up": "fadeInUp 180ms ease-out",
+              "pulse-soft": "pulseSoft 1.4s ease-in-out infinite",
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      body {
+        background:
+          radial-gradient(1200px 520px at 50% -20%, rgba(91, 140, 255, 0.12), transparent 58%),
+          radial-gradient(900px 420px at 80% 10%, rgba(122, 92, 255, 0.08), transparent 62%),
+          linear-gradient(180deg, #0b1020 0%, #080d1a 100%);
+      }
+      #chatMessages::-webkit-scrollbar,
+      #agentTrace::-webkit-scrollbar,
+      #log::-webkit-scrollbar {
+        width: 10px;
+      }
+      #chatMessages::-webkit-scrollbar-thumb,
+      #agentTrace::-webkit-scrollbar-thumb,
+      #log::-webkit-scrollbar-thumb {
+        background: #2e3d5f;
+        border-radius: 999px;
+      }
+      #chatMessages {
+        background-image: linear-gradient(180deg, rgba(16, 24, 42, 0.95) 0%, rgba(11, 17, 32, 0.95) 100%);
+      }
+    </style>
+  </head>
+  <body class="min-h-screen text-text-primary antialiased selection:bg-accent-primary/30">
+    <div class="mx-auto max-w-[1360px] px-4 py-4 md:px-6 md:py-6">
+      <header class="mb-4 rounded-2xl border border-border-subtle/90 bg-bg-elevated/85 p-3 shadow-card backdrop-blur">
+        <div class="flex flex-wrap items-center justify-between gap-3">
+          <div class="flex items-center gap-2.5">
+            <span class="h-2.5 w-2.5 rounded-full bg-accent-primary shadow-[0_0_14px_rgba(91,140,255,0.55)]"></span>
+            <span id="brandText" class="text-sm font-semibold tracking-tight text-text-secondary">Voice Scheduling System</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <select
+              id="languageSelect"
+              class="rounded-xl border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-text-secondary outline-none transition focus:border-accent-primary"
+              aria-label="Idioma da interface"
+            >
+              <option value="pt-BR">Português (Brasil)</option>
+              <option value="en-US">English (USA)</option>
+              <option value="es-419">Español (Latinoamérica)</option>
+            </select>
+            <a
+              id="portfolioTopLink"
+              class="rounded-xl border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-text-secondary transition hover:border-border-strong hover:text-text-primary"
+              href="https://borgas-research.lovable.app"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Ver meu portfolio
+            </a>
+          </div>
+        </div>
+      </header>
+
+      <section class="mb-4 rounded-2xl border border-border-subtle bg-bg-elevated/70 p-5 shadow-card">
+        <div class="flex flex-col gap-5 md:flex-row md:items-start md:justify-between">
+          <div class="max-w-3xl">
+            <p id="heroEyebrow" class="text-xs font-medium uppercase tracking-[0.12em] text-text-muted">Real-time Conversational Agent</p>
+            <h1 class="mt-2 text-3xl font-semibold leading-tight tracking-tight text-text-primary md:text-5xl">
+              <span id="heroTitleMain">Converse naturally.</span>
+              <span id="heroTitleGrad" class="text-accent-primary">Schedule confidently.</span>
+            </h1>
+            <p id="heroCopy" class="mt-3 max-w-2xl text-sm leading-6 text-text-muted md:text-base">
+              Interface de produto para voz + chat com streaming, contexto operacional e inteligência de agenda.
+            </p>
+            <div class="mt-4 flex flex-wrap gap-2">
+              <span class="rounded-full border border-border-subtle bg-bg-primary/70 px-2.5 py-1 text-xs text-text-muted">Agora RTC</span>
+              <span class="rounded-full border border-border-subtle bg-bg-primary/70 px-2.5 py-1 text-xs text-text-muted">Agora CAE</span>
+              <span class="rounded-full border border-border-subtle bg-bg-primary/70 px-2.5 py-1 text-xs text-text-muted">MCP Orchestration</span>
+              <span class="rounded-full border border-border-subtle bg-bg-primary/70 px-2.5 py-1 text-xs text-text-muted">FastAPI Streaming</span>
+            </div>
+          </div>
+          <aside class="w-full rounded-xl border border-border-subtle bg-bg-primary/80 p-4 md:max-w-sm">
+            <h3 id="portfolioInfoTitle" class="text-sm font-semibold text-text-secondary">Mais informações</h3>
+            <p id="portfolioInfoDesc" class="mt-2 text-sm leading-6 text-text-muted">
+              Explore projetos, trajetória e publicações em um portfólio completo.
+            </p>
+            <ul class="mt-3 space-y-1.5 text-sm text-text-secondary">
+              <li id="portfolioBullet1">Projetos de IA aplicada e engenharia</li>
+              <li id="portfolioBullet2">Experiência profissional e stack</li>
+              <li id="portfolioBullet3">Contato para parcerias e oportunidades</li>
+            </ul>
+            <a
+              id="portfolioHeroLink"
+              class="mt-4 inline-flex rounded-lg border border-border-subtle px-3 py-2 text-sm text-text-secondary transition hover:border-border-strong hover:text-text-primary"
+              href="https://borgas-research.lovable.app"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              Portfolio
+            </a>
+          </aside>
+        </div>
+      </section>
+
+      <main class="grid grid-cols-1 gap-4 lg:grid-cols-12">
+        <section class="lg:col-span-8">
+          <div class="rounded-2xl border border-border-subtle bg-bg-elevated/90 p-4 shadow-card">
+            <div class="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <h2 id="consoleTitle" class="text-base font-semibold tracking-tight text-text-secondary">Conversation Workspace</h2>
+              <div class="flex items-center gap-2 rounded-full border border-border-subtle bg-bg-primary px-3 py-1.5 text-xs text-text-muted">
+                <span id="rtcStatusDot" class="h-2 w-2 rounded-full bg-text-muted"></span>
+                <span id="rtcStatusText">Aguardando conexão</span>
+              </div>
+            </div>
+
+            <div class="mb-3 rounded-xl border border-border-subtle bg-bg-primary/85 px-3 py-2.5 shadow-soft">
+              <div class="flex items-center justify-between gap-3">
+                <div>
+                  <p class="text-xs uppercase tracking-[0.12em] text-text-muted">Agent Voice State</p>
+                  <p id="agentStateLabel" class="mt-1 text-sm font-medium text-text-secondary">Idle</p>
+                  <p id="agentStateHint" class="mt-0.5 text-xs text-text-muted">Ready to start a new turn.</p>
+                </div>
+                <span id="agentStatePulse" class="h-3 w-3 rounded-full bg-text-muted"></span>
+              </div>
+            </div>
+
+            <div class="mb-3 grid grid-cols-1 gap-2 md:grid-cols-2">
+              <label class="block">
+                <span id="sessionLabel" class="mb-1 block text-xs text-text-muted">Session ID</span>
+                <input
+                  id="sessionId"
+                  value="sessao-demo-1"
+                  class="w-full rounded-xl border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-text-secondary outline-none transition focus:border-accent-primary"
+                />
+              </label>
+              <label class="block">
+                <span id="userLabel" class="mb-1 block text-xs text-text-muted">User ID</span>
+                <input
+                  id="userId"
+                  value="local-user"
+                  class="w-full rounded-xl border border-border-subtle bg-bg-primary px-3 py-2 text-sm text-text-secondary outline-none transition focus:border-accent-primary"
+                />
+              </label>
+            </div>
+
+            <div
+              id="chatMessages"
+              class="min-h-[360px] max-h-[58vh] overflow-auto rounded-xl border border-border-subtle bg-bg-primary/90 p-3 shadow-inner"
+            ></div>
+
+            <div class="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_auto_auto_auto]">
+              <input
+                id="chatInput"
+                class="w-full rounded-xl border border-border-subtle bg-bg-primary px-3 py-2.5 text-sm text-text-secondary outline-none transition focus:border-accent-primary"
+                placeholder="Descreva o que você quer agendar..."
+              />
+              <button
+                id="connectAgoraBtn"
+                class="rounded-xl border border-border-subtle bg-bg-primary px-4 py-2.5 text-sm font-medium text-text-secondary transition hover:border-border-strong hover:text-text-primary hover:shadow-soft"
+              >
+                Conectar Agora
+              </button>
+              <button
+                id="voiceToggleBtn"
+                class="rounded-xl border border-border-subtle bg-bg-primary px-4 py-2.5 text-sm font-medium text-text-secondary transition hover:border-border-strong hover:text-text-primary hover:shadow-soft"
+              >
+                Iniciar voz
+              </button>
+              <button
+                id="sendChatBtn"
+                class="rounded-xl bg-accent-primary px-4 py-2.5 text-sm font-medium text-white transition hover:brightness-110 hover:shadow-soft"
+              >
+                Enviar
+              </button>
+            </div>
+
+            <button
+              id="interruptAgentBtn"
+              class="mt-2 hidden rounded-xl border border-state-warning/40 bg-state-warning/10 px-3 py-2 text-xs font-medium text-state-warning transition hover:bg-state-warning/20"
+            >
+              Interromper resposta do agente
+            </button>
+          </div>
+        </section>
+
+        <aside class="space-y-4 lg:col-span-4 lg:sticky lg:top-5 lg:self-start">
+          <section class="rounded-2xl border border-border-subtle bg-bg-elevated/90 p-4 shadow-card">
+            <h3 class="text-sm font-semibold text-text-secondary">Session Intelligence</h3>
+            <div class="mt-3 grid grid-cols-2 gap-2">
+              <div class="rounded-xl border border-border-subtle bg-bg-primary p-2">
+                <p id="ctxSessionLabel" class="text-[10px] uppercase tracking-[0.1em] text-text-muted">Sessão</p>
+                <p id="ctxSession" class="mt-1 text-sm font-medium text-text-secondary">sessao-demo-1</p>
+              </div>
+              <div class="rounded-xl border border-border-subtle bg-bg-primary p-2">
+                <p id="ctxIntentLabel" class="text-[10px] uppercase tracking-[0.1em] text-text-muted">Última intenção</p>
+                <p id="ctxIntent" class="mt-1 text-sm font-medium text-text-secondary">-</p>
+              </div>
+              <div class="rounded-xl border border-border-subtle bg-bg-primary p-2">
+                <p id="ctxConfirmationLabel" class="text-[10px] uppercase tracking-[0.1em] text-text-muted">Confirmação</p>
+                <p id="ctxConfirmation" class="mt-1 text-sm font-medium text-text-secondary">Não pendente</p>
+              </div>
+              <div class="rounded-xl border border-border-subtle bg-bg-primary p-2">
+                <p id="ctxExecutedLabel" class="text-[10px] uppercase tracking-[0.1em] text-text-muted">Execução</p>
+                <p id="ctxExecuted" class="mt-1 text-sm font-medium text-text-secondary">Não</p>
+              </div>
+            </div>
+          </section>
+
+          <section class="rounded-2xl border border-border-subtle bg-bg-elevated/90 p-4 shadow-card">
+            <h3 id="proactiveTitle" class="text-sm font-semibold text-text-secondary">Sugestões proativas</h3>
+            <div id="proactiveSuggestions" class="mt-3 flex flex-wrap gap-2 text-xs text-text-muted">
+              <span>Sem sugestões no momento.</span>
+            </div>
+          </section>
+
+          <section class="rounded-2xl border border-border-subtle bg-bg-elevated/90 p-4 shadow-card">
+            <h3 id="traceTitle" class="text-sm font-semibold text-text-secondary">Operational Trace</h3>
+            <div id="agentTrace" class="mt-3 max-h-[240px] space-y-2 overflow-auto text-xs text-text-muted">
+              <span>Sem etapas registradas ainda.</span>
+            </div>
+          </section>
+
+          <details class="rounded-2xl border border-border-subtle bg-bg-elevated/90 shadow-soft">
+            <summary id="debugSummary" class="cursor-pointer px-4 py-3 text-sm text-text-muted">Diagnóstico técnico</summary>
+            <pre id="log" class="max-h-[180px] overflow-auto border-t border-border-subtle px-4 py-3 text-xs text-text-muted"></pre>
+          </details>
+        </aside>
+      </main>
+    </div>
+
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+    <script src="./app.js"></script>
+  </body>
+</html>

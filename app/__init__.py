@@ -1,0 +1,1 @@
+"""Voice assistant MVP package."""
