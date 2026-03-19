@@ -3,3 +3,8 @@
   # Só front estático neste artefacto; evita depender de Python/Rust no build.
   command = "true"
   publish = "web"
+
+# Evita Python 3.14+ no build: pydantic-core ainda pode exigir compilação (Rust)
+# quando não há wheel; 3.11 tem wheels prontos e bate com o README.
+[build.environment]
+  PYTHON_VERSION = "3.11"
