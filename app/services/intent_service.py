@@ -30,29 +30,37 @@ class IntentService:
 
     def _infer_intent(self, lowered: str) -> str:
         has_time_hint = bool(re.search(r"\b\d{1,2}(:\d{2})?\b", lowered)) or any(
-            token in lowered for token in ["manha", "manhã", "tarde", "noite", "tomorrow", "today", "amanha", "amanhã"]
+            token in lowered
+            for token in [
+                "manha", "manhã", "tarde", "noite", "tomorrow", "today", "amanha", "amanhã",
+                "manana", "mañana", "lunes", "martes", "miercoles", "jueves", "viernes", "sabado", "domingo",
+            ]
         )
-        has_meeting_noun = any(token in lowered for token in ["reuniao", "reunião", "meeting"])
+        has_meeting_noun = any(token in lowered for token in ["reuniao", "reunião", "meeting", "reunion", "reunión", "cita"])
 
-        if any(k in lowered for k in ["criar", "crie", "create", "book", "agende", "marque"]):
+        if any(k in lowered for k in ["criar", "crie", "create", "book", "agende", "marque", "agenda una", "crea una", "programa"]):
             return "create_meeting"
-        if has_meeting_noun and has_time_hint and not any(k in lowered for k in ["reagend", "resched", "cancel", "cancele"]):
+        if has_meeting_noun and has_time_hint and not any(k in lowered for k in ["reagend", "resched", "cancel", "cancele", "cancela"]):
             return "create_meeting"
-        if any(k in lowered for k in ["reagend", "resched"]):
+        if any(k in lowered for k in ["reagend", "resched", "reprograma", "cambia la hora"]):
             return "reschedule_meeting"
-        if any(k in lowered for k in ["cancel", "cancele", "delete", "remove"]):
+        if any(k in lowered for k in ["cancel", "cancele", "cancela", "delete", "remove", "elimina"]):
             return "cancel_meeting"
-        if any(k in lowered for k in ["tenho", "compromisso", "agenda", "what do i have", "list", "show", "consultar", "consulta"]):
+        if any(k in lowered for k in [
+            "tenho", "compromisso", "what do i have", "list", "show", "consultar", "consulta",
+            "tengo", "compromiso", "que tengo", "algún compromiso", "algun compromiso", "mis reuniones",
+        ]):
             return "list_meetings"
-        if any(k in lowered for k in ["repita", "same as last", "last meeting", "ultima", "última"]):
+        if any(k in lowered for k in ["repita", "same as last", "last meeting", "ultima", "última", "repite"]):
             return "repeat_last_meeting"
-        if any(k in lowered for k in ["english", "portugues", "português", "idioma", "language"]):
+        if any(k in lowered for k in ["english", "portugues", "português", "español", "espanol", "idioma", "language"]):
             return "set_language"
         return "unknown"
 
     def _extract_entities(self, text: str, language: str, intent: str) -> dict[str, Any]:
         now = datetime.now()
-        languages = ["pt", "en"] if language in {"pt", "en"} else [language]
+        lang_map = {"pt": ["pt", "en"], "en": ["en", "pt"], "es": ["es", "en"]}
+        languages = lang_map.get(language, [language, "en"])
         date_hits = search_dates(
             text,
             languages=languages,
@@ -76,9 +84,11 @@ class IntentService:
         language_change = self._extract_language_change(text)
         target_hint = self._extract_target_hint(text)
 
-        title = "Meeting" if language == "en" else "Reuniao"
+        title_map = {"en": "Meeting", "es": "Reunion", "pt": "Reuniao"}
+        title = title_map.get(language, "Reuniao")
         if participants:
-            title = f"{title} com {', '.join(participants)}" if language == "pt" else f"{title} with {', '.join(participants)}"
+            prep = {"en": "with", "es": "con", "pt": "com"}.get(language, "com")
+            title = f"{title} {prep} {', '.join(participants)}"
 
         return {
             "start": start,
@@ -116,9 +126,9 @@ class IntentService:
 
     def _extract_recurrence(self, text: str) -> str | None:
         lowered = text.lower()
-        if "toda semana" in lowered or "every week" in lowered or "semanal" in lowered:
+        if any(k in lowered for k in ["toda semana", "every week", "semanal", "cada semana"]):
             return "weekly"
-        if "todo mes" in lowered or "todo mês" in lowered or "every month" in lowered or "mensal" in lowered:
+        if any(k in lowered for k in ["todo mes", "todo mês", "every month", "mensal", "cada mes"]):
             return "monthly"
         return None
 
@@ -128,10 +138,12 @@ class IntentService:
             return "en"
         if "portugues" in lowered or "português" in lowered:
             return "pt"
+        if "español" in lowered or "espanol" in lowered:
+            return "es"
         return None
 
     def _extract_target_hint(self, text: str) -> str | None:
-        match = re.search(r"reuniao\s+com\s+([a-zA-ZÀ-ú\s]+)", text, re.IGNORECASE)
+        match = re.search(r"(?:reuniao|reunion|reunión)\s+(?:com|con|with)\s+([a-zA-ZÀ-ú\s]+)", text, re.IGNORECASE)
         if match:
             return match.group(1).strip()
         return None
@@ -151,19 +163,10 @@ class IntentService:
 
     def _is_confirm_yes(self, lowered: str) -> bool:
         yes_exact = {
-            "sim",
-            "yes",
-            "ok",
-            "okay",
-            "claro",
-            "confirmo",
-            "confirmar",
-            "confirm",
-            "pode",
-            "pode sim",
-            "pode ser",
-            "isso",
-            "isso mesmo",
+            "sim", "yes", "ok", "okay",
+            "claro", "confirmo", "confirmar", "confirm",
+            "pode", "pode sim", "pode ser", "isso", "isso mesmo",
+            "si", "sí", "dale", "por supuesto", "confirmar", "adelante",
         }
         if lowered in yes_exact:
             return True
@@ -178,13 +181,16 @@ class IntentService:
         return any(re.search(pattern, lowered) for pattern in yes_patterns)
 
     def _is_confirm_no(self, lowered: str) -> bool:
-        no_exact = {"nao", "não", "no", "cancelar", "stop", "negativo", "nao confirmar", "não confirmar"}
+        no_exact = {"nao", "não", "no", "cancelar", "stop", "negativo", "nao confirmar", "não confirmar", "no gracias", "mejor no"}
         if lowered in no_exact:
             return True
+        has_meeting_context = any(w in lowered for w in ["reuniao", "reunion", "meeting", "compromiso", "mi ", "minha "])
+        if has_meeting_context:
+            return False
         no_patterns = [
             r"^\s*nao[, ]+confirm(ar)?\s*$",
             r"^\s*não[, ]+confirm(ar)?\s*$",
-            r"\bcancel(a|ar|e)\b",
+            r"^\s*cancel(a|ar|e)\s*$",
             r"\bdeixa pra la\b",
             r"^\s*pare\s*$",
         ]

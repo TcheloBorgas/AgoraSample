@@ -30,7 +30,7 @@ class MeetingDraft(BaseModel):
 
 class ConversationState(BaseModel):
     session_id: str
-    language: Literal["pt", "en"] = "pt"
+    language: Literal["pt", "en", "es"] = "pt"
     short_memory: list[dict] = Field(default_factory=list)
     pending_confirmation: dict | None = None
     last_intent: IntentName = "unknown"
