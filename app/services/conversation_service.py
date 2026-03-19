@@ -143,12 +143,16 @@ class ConversationService:
             )
 
         trigger = "session_start" if len(state.short_memory) <= 2 else "after_list" if response.intent == "list_meetings" else "generic"
-        proactive_suggestions = self.proactive.suggest(
-            session_id=state.session_id,
-            user_id=user_id,
-            language=state.language,
-            trigger=trigger,
-        )
+        try:
+            proactive_suggestions = self.proactive.suggest(
+                session_id=state.session_id,
+                user_id=user_id,
+                language=state.language,
+                trigger=trigger,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Sugestões proativas ignoradas após falha: %s", exc)
+            proactive_suggestions = []
         skip_proactive_tail = False
         if state.meeting_draft is not None:
             merged_for_slots = self.intents.merge_meeting_draft(state.meeting_draft, {})

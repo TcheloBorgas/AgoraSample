@@ -86,7 +86,10 @@ class ProactiveSuggestionService:
                         )
 
         if trigger in {"session_start", "after_list"} and top_hour is not None:
-            today_events = self.scheduler.list_meetings(when=now)
+            try:
+                today_events = self.scheduler.list_meetings(when=now)
+            except Exception:  # noqa: BLE001 — calendário indisponível não deve derrubar o chat
+                today_events = []
             has_top_hour = any(self._event_is_near_hour(event, top_hour) for event in today_events)
             if not has_top_hour:
                 key = f"slot:{now.date().isoformat()}:{top_hour}"
