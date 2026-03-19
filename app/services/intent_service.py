@@ -37,8 +37,18 @@ class IntentService:
             ]
         )
         has_meeting_noun = any(token in lowered for token in ["reuniao", "reunião", "meeting", "reunion", "reunión", "cita"])
+        has_preference_reply = any(
+            token in lowered
+            for token in [
+                "i'd like", "i would like", "prefer", "i prefer",
+                "prefiro", "gostaria", "quero", "pode ser",
+                "me gustaría", "prefiero", "quisiera",
+            ]
+        )
 
-        if any(k in lowered for k in ["criar", "crie", "create", "book", "agende", "marque", "agenda una", "crea una", "programa"]):
+        if any(k in lowered for k in ["criar", "crie", "create", "book", "agende", "marque", "marca", "agenda una", "crea una", "programa"]):
+            return "create_meeting"
+        if has_time_hint and has_preference_reply:
             return "create_meeting"
         if has_meeting_noun and has_time_hint and not any(k in lowered for k in ["reagend", "resched", "cancel", "cancele", "cancela"]):
             return "create_meeting"
@@ -163,35 +173,54 @@ class IntentService:
 
     def _is_confirm_yes(self, lowered: str) -> bool:
         yes_exact = {
-            "sim", "yes", "ok", "okay",
-            "claro", "confirmo", "confirmar", "confirm",
+            "sim", "yes", "ok", "okay", "k",
+            "claro", "confirmo", "confirmar", "confirm", "confirma", "confirme",
             "pode", "pode sim", "pode ser", "isso", "isso mesmo",
-            "si", "sí", "dale", "por supuesto", "confirmar", "adelante",
+            "tudo bem", "perfeito", "feito", "certo", "correto",
+            "si", "sí", "dale", "por supuesto", "adelante", "perfecto",
+            "pode confirmar", "sim pode", "sim confirmar",
+            "yes please", "go ahead", "prosseguir",
+            "pode confirmar sim", "confirma por favor",
+            "confirma sim", "sim confirma", "sim por favor",
+            "claro que sim", "com certeza",
         }
         if lowered in yes_exact:
             return True
         yes_patterns = [
             r"\bpode confirmar\b",
-            r"\bconfirma(r)?\b",
+            r"\bconfirm(a|e|o|ar)\b",
             r"\bsim[, ]+pode\b",
             r"\byes[, ]+please\b",
             r"\bgo ahead\b",
             r"\bprosseguir\b",
+            r"\btudo (bem|certo)\b",
+            r"\bcom certeza\b",
+            r"\bpor favor\b.*\bconfirm",
         ]
         return any(re.search(pattern, lowered) for pattern in yes_patterns)
 
     def _is_confirm_no(self, lowered: str) -> bool:
-        no_exact = {"nao", "não", "no", "cancelar", "stop", "negativo", "nao confirmar", "não confirmar", "no gracias", "mejor no"}
+        no_exact = {
+            "nao", "não", "no", "cancelar", "stop", "negativo",
+            "nao confirmar", "não confirmar", "no gracias", "mejor no",
+            "deixa pra la", "deixa pra lá", "nao quero", "não quero",
+        }
         if lowered in no_exact:
             return True
-        has_meeting_context = any(w in lowered for w in ["reuniao", "reunion", "meeting", "compromiso", "mi ", "minha "])
+        has_meeting_context = any(
+            w in lowered for w in [
+                "reuniao", "reunião", "reunion", "reunión",
+                "meeting", "compromiso", "compromisso",
+                "mi ", "minha ", "essa ", "esta ", "este ",
+            ]
+        )
         if has_meeting_context:
             return False
         no_patterns = [
             r"^\s*nao[, ]+confirm(ar)?\s*$",
             r"^\s*não[, ]+confirm(ar)?\s*$",
             r"^\s*cancel(a|ar|e)\s*$",
-            r"\bdeixa pra la\b",
+            r"\bdeixa pra l[aá]\b",
             r"^\s*pare\s*$",
         ]
         return any(re.search(pattern, lowered) for pattern in no_patterns)

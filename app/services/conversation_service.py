@@ -96,8 +96,6 @@ class ConversationService:
             )
             self.turns.mark_revision_applied(session_id)
 
-        # If user starts a new actionable command while there is a pending confirmation,
-        # treat it as replacing the previous pending action to keep the conversation natural.
         if state.pending_confirmation and intent_result.intent not in {"confirm_yes", "confirm_no"}:
             state.pending_confirmation = None
             response = self._handle_intent(
@@ -105,6 +103,8 @@ class ConversationService:
             )
         elif state.pending_confirmation:
             response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace)
+        elif intent_result.intent in {"confirm_yes", "confirm_no"}:
+            response = self._reparse_as_new_intent(state, user_id, message, trace)
         else:
             response = self._handle_intent(
                 state, user_id, intent_result.intent, intent_result.entities, intent_result.missing_fields, message, trace
@@ -307,6 +307,36 @@ class ConversationService:
             except Exception:  # noqa: BLE001
                 pass
         return self.fallback.unknown_intent(language)
+
+    def _reparse_as_new_intent(
+        self,
+        state: ConversationState,
+        user_id: str,
+        raw_message: str,
+        trace: TraceContext,
+    ) -> AssistantResponse:
+        """User said something like 'confirm' but there's no pending action.
+        Re-parse the raw text as a regular actionable command so the agent
+        doesn't reply with 'I didn't understand'."""
+        self.trace_service.step(
+            trace,
+            "reparse_confirmation",
+            "No pending confirmation found; re-interpreting message as a new intent.",
+            status="warning",
+        )
+        fallback_intent = self.intents._infer_intent(raw_message.lower().strip())
+        if fallback_intent != "unknown":
+            entities = self.intents._extract_entities(raw_message, state.language, fallback_intent)
+            missing = self.intents._required_fields(fallback_intent, entities)
+            return self._handle_intent(state, user_id, fallback_intent, entities, missing, raw_message, trace)
+
+        text = self.language.in_language(
+            "Nao ha nenhuma operacao pendente para confirmar. Me diga o que deseja: criar, consultar, reagendar ou cancelar uma reuniao.",
+            "There is no pending operation to confirm. Tell me what you'd like to do: create, list, reschedule or cancel a meeting.",
+            state.language,
+            es_text="No hay ninguna operacion pendiente para confirmar. Dime que deseas: crear, consultar, reagendar o cancelar una reunion.",
+        )
+        return self._build_response(state, "unknown", text, False, False)
 
     def _handle_confirmation(
         self,
