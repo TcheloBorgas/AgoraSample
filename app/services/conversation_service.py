@@ -11,7 +11,7 @@ from app.adapters.mcp_tools import CalendarMcpTools
 from app.adapters.ollama_client import OllamaClient
 from app.core.config import settings
 from app.core.metrics import metrics
-from app.models.domain import ConversationState
+from app.models.domain import ConversationState, MeetingDraft
 from app.schemas.api import AssistantResponse
 from app.services.agent_trace_service import AgentTraceService, TraceContext
 from app.services.fallback_service import FallbackService
@@ -72,6 +72,23 @@ class ConversationService:
         self.trace_service.step(trace, "detect_language", "Language identified for current turn.", data={"language": detected_language})
 
         intent_result = self.intents.detect_intent_and_entities(message, state.language)
+        if intent_result.intent == "unknown" and state.meeting_draft is not None:
+            resumed = self.intents.try_resume_create_after_unknown(message, state.language, state.meeting_draft)
+            if resumed is not None:
+                intent_result = resumed
+        if intent_result.intent in {"list_meetings", "reschedule_meeting", "cancel_meeting", "set_language", "repeat_last_meeting"}:
+            state.meeting_draft = None
+        if intent_result.intent == "create_meeting":
+            merged = self.intents.merge_meeting_draft(state.meeting_draft, intent_result.entities)
+            merged = self.intents.fill_first_missing_create_slot(
+                self.intents.normalize_user_text(message),
+                state.language,
+                merged,
+            )
+            intent_result.entities = merged
+            intent_result.missing_fields = self.intents._required_fields("create_meeting", merged)
+            self._persist_meeting_draft(state, merged)
+
         self.memory.append_user_message(state, message, intent_result.intent)
         metrics.inc("messages_total")
         self.trace_service.step(
@@ -103,6 +120,21 @@ class ConversationService:
             )
         elif state.pending_confirmation:
             response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace)
+        elif intent_result.intent == "confirm_yes" and state.pending_confirmation is None and state.meeting_draft is not None:
+            merged = self.intents.merge_meeting_draft(state.meeting_draft, intent_result.entities)
+            missing = self.intents._required_fields("create_meeting", merged)
+            if missing:
+                self.trace_service.step(
+                    trace,
+                    "confirm_without_pending",
+                    "User said yes while only meeting draft/slot-fill is active.",
+                    status="warning",
+                    data={"missing_fields": missing},
+                )
+                text = self.fallback.misplaced_confirm_yes_during_booking(missing, state.language)
+                response = self._build_response(state, "create_meeting", text, False, False)
+            else:
+                response = self._reparse_as_new_intent(state, user_id, message, trace)
         elif intent_result.intent in {"confirm_yes", "confirm_no"}:
             response = self._reparse_as_new_intent(state, user_id, message, trace)
         else:
@@ -117,6 +149,11 @@ class ConversationService:
             language=state.language,
             trigger=trigger,
         )
+        skip_proactive_tail = False
+        if state.meeting_draft is not None:
+            merged_for_slots = self.intents.merge_meeting_draft(state.meeting_draft, {})
+            skip_proactive_tail = len(self.intents._required_fields("create_meeting", merged_for_slots)) > 0
+        just_created = response.action_executed and response.intent == "create_meeting"
         if proactive_suggestions:
             self.trace_service.step(
                 trace,
@@ -124,7 +161,7 @@ class ConversationService:
                 "Generated proactive suggestions from persisted history.",
                 data={"suggestions_count": len(proactive_suggestions), "reasons": [s.reason for s in proactive_suggestions]},
             )
-            if not response.needs_confirmation:
+            if not response.needs_confirmation and not skip_proactive_tail and not just_created:
                 response.response_text = response.response_text + "\n\n" + proactive_suggestions[0].message
 
         response.proactive_suggestions = proactive_suggestions
@@ -183,13 +220,18 @@ class ConversationService:
 
         try:
             if intent == "list_meetings":
+                list_span = str(entities.get("list_span") or "day")
                 exec_result = self.mcp_tools.call_tool(
                     "list_events",
-                    {"date": (entities.get("start") or datetime.now()).isoformat(), "query": entities.get("target_hint")},
+                    {
+                        "date": (entities.get("start") or datetime.now()).isoformat(),
+                        "query": entities.get("target_hint"),
+                        "span": list_span,
+                    },
                 )
                 events = exec_result.output_payload.get("events", [])
                 self.trace_service.step(trace, "execute_tool", exec_result.summary, data={"tool": exec_result.tool_name, "success": exec_result.success})
-                text = self._format_events(events, state.language)
+                text = self._format_events(events, state.language, list_span=list_span)
                 return self._build_response(state, intent, text, False, True, {"events": events, "tool_execution": exec_result.model_dump(mode="json")})
 
             if intent == "repeat_last_meeting":
@@ -219,12 +261,15 @@ class ConversationService:
             if intent == "create_meeting":
                 payload = {
                     "title": entities["title"],
+                    "organizer_name": entities.get("organizer_name"),
+                    "organizer_email": entities.get("organizer_email"),
                     "start": entities["start"].isoformat(),
                     "duration_minutes": entities["duration_minutes"],
                     "participants": entities["participants"],
                     "recurrence": entities["recurrence"],
                 }
                 state.pending_confirmation = {"action": "create", "payload": payload}
+                state.meeting_draft = None
                 text = self.language.in_language(
                     self._pt_create_confirm(payload),
                     self._en_create_confirm(payload),
@@ -324,17 +369,25 @@ class ConversationService:
             "No pending confirmation found; re-interpreting message as a new intent.",
             status="warning",
         )
-        fallback_intent = self.intents._infer_intent(raw_message.lower().strip())
+        normalized = self.intents.normalize_user_text(raw_message)
+        fallback_intent = self.intents._infer_intent(normalized.lower().strip())
         if fallback_intent != "unknown":
-            entities = self.intents._extract_entities(raw_message, state.language, fallback_intent)
-            missing = self.intents._required_fields(fallback_intent, entities)
+            entities = self.intents._extract_entities(normalized, state.language, fallback_intent)
+            if fallback_intent == "create_meeting":
+                merged = self.intents.merge_meeting_draft(state.meeting_draft, entities)
+                merged = self.intents.fill_first_missing_create_slot(normalized, state.language, merged)
+                entities = merged
+                missing = self.intents._required_fields("create_meeting", merged)
+                self._persist_meeting_draft(state, merged)
+            else:
+                missing = self.intents._required_fields(fallback_intent, entities)
             return self._handle_intent(state, user_id, fallback_intent, entities, missing, raw_message, trace)
 
         text = self.language.in_language(
-            "Nao ha nenhuma operacao pendente para confirmar. Me diga o que deseja: criar, consultar, reagendar ou cancelar uma reuniao.",
+            "Não há nenhuma operação pendente para confirmar. Diga o que deseja: criar, consultar, reagendar ou cancelar uma reunião.",
             "There is no pending operation to confirm. Tell me what you'd like to do: create, list, reschedule or cancel a meeting.",
             state.language,
-            es_text="No hay ninguna operacion pendiente para confirmar. Dime que deseas: crear, consultar, reagendar o cancelar una reunion.",
+            es_text="No hay ninguna operación pendiente para confirmar. Dime qué deseas: crear, consultar, reagendar o cancelar una reunión.",
         )
         return self._build_response(state, "unknown", text, False, False)
 
@@ -348,6 +401,7 @@ class ConversationService:
     ) -> AssistantResponse:
         if detected_intent == "confirm_no":
             state.pending_confirmation = None
+            state.meeting_draft = None
             text = self.language.in_language(
                 "Sem problemas, operacao cancelada.",
                 "No problem, operation canceled.",
@@ -382,6 +436,8 @@ class ConversationService:
                         "duration_minutes": payload["duration_minutes"],
                         "participants": payload.get("participants", []),
                         "recurrence": payload.get("recurrence"),
+                        "organizer_name": payload.get("organizer_name"),
+                        "organizer_email": payload.get("organizer_email"),
                     },
                 )
                 self.trace_service.step(
@@ -409,6 +465,8 @@ class ConversationService:
                     user_id,
                     {
                         "title": payload["title"],
+                        "organizer_name": payload.get("organizer_name"),
+                        "organizer_email": payload.get("organizer_email"),
                         "start": payload["start"],
                         "duration_minutes": payload["duration_minutes"],
                         "participants": payload.get("participants", []),
@@ -417,8 +475,9 @@ class ConversationService:
                 )
                 text = self.language.in_language(
                     self._pt_create_done(event),
-                    f"Done! Meeting created successfully. Link: {event.get('htmlLink')}",
+                    self._en_create_done(event),
                     state.language,
+                    es_text=self._es_create_done(event),
                 )
                 self.actions.log(state.session_id, user_id, "create_meeting", "create", payload, True)
                 return self._build_response(
@@ -462,8 +521,9 @@ class ConversationService:
                     return self._build_response(state, "reschedule_meeting", text, False, False, {"suggestions": sug})
                 text = self.language.in_language(
                     self._pt_reschedule_done(event),
-                    f"Great, your meeting has been rescheduled. Updated link: {event.get('htmlLink')}",
+                    self._en_reschedule_done(event),
                     state.language,
+                    es_text=self._es_reschedule_done(event),
                 )
                 self.actions.log(state.session_id, user_id, "reschedule_meeting", "reschedule", payload, True)
                 return self._build_response(
@@ -531,68 +591,152 @@ class ConversationService:
             payload=payload or {},
         )
 
-    def _format_events(self, events: list[dict], language: str) -> str:
+    def _format_events(self, events: list[dict], language: str, list_span: str = "day") -> str:
         if not events:
             return self.language.in_language(
-                "Nao encontrei compromissos nesse periodo.",
+                "Não encontrei compromissos nesse período.",
                 "I could not find meetings for that period.",
                 language,
+                es_text="No encontré compromisos en ese período.",
             )
+        max_rows = 30 if list_span == "week" else 8
         rows = []
-        for event in events[:6]:
+        for event in events[:max_rows]:
             start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
-            summary = event.get("summary", "Sem titulo")
+            summary = event.get("summary", "Sem título")
             start_label = self._format_dt(start, language)
-            rows.append(f"- {summary} ({start_label})")
-        header = "Encontrei estes compromissos:" if language == "pt" else "I found these meetings:"
-        return header + "\n" + "\n".join(rows)
+            desc = event.get("description") or ""
+            org_name = ""
+            org_email = ""
+            for line in desc.split("\n"):
+                stripped = line.strip()
+                if stripped.lower().startswith("organizer name:"):
+                    org_name = stripped.split(":", 1)[1].strip()
+                if stripped.lower().startswith("contact email:"):
+                    org_email = stripped.split(":", 1)[1].strip()
+            attendees = event.get("attendees") or []
+            attendee_emails = ", ".join(a.get("email", "") for a in attendees if a.get("email"))
+            contact = org_email or attendee_emails
+            detail_bits = [b for b in (org_name, contact) if b]
+            detail = f" · {' · '.join(detail_bits)}" if detail_bits else ""
+            rows.append(f"- {summary} ({start_label}){detail}")
+        if language == "pt":
+            header = "Nesta semana encontrei:" if list_span == "week" else "Encontrei estes compromissos:"
+        elif language == "es":
+            header = "Esta semana encontré:" if list_span == "week" else "Encontré estos compromisos:"
+        else:
+            header = "This week I found:" if list_span == "week" else "I found these meetings:"
+        suffix = ""
+        if len(events) > max_rows:
+            suffix = self.language.in_language(
+                f"\n(mostrando {max_rows} de {len(events)} itens)",
+                f"\n(showing {max_rows} of {len(events)} items)",
+                language,
+                es_text=f"\n(mostrando {max_rows} de {len(events)})",
+            )
+        return header + "\n" + "\n".join(rows) + suffix
+
+    @staticmethod
+    def _participants_excluding_organizer(payload: dict[str, Any]) -> list[str]:
+        org = (payload.get("organizer_email") or "").strip().lower()
+        raw = payload.get("participants") or []
+        out: list[str] = []
+        for p in raw:
+            if not isinstance(p, str):
+                continue
+            s = p.strip()
+            if not s:
+                continue
+            if "@" in s and s.lower() == org:
+                continue
+            out.append(s)
+        return out
 
     def _pt_create_confirm(self, payload: dict[str, Any]) -> str:
-        participants = ", ".join(payload.get("participants", []))
+        others = self._participants_excluding_organizer(payload)
+        others_txt = ", ".join(others) if others else ""
         recurrence = payload.get("recurrence")
-        recurrence_part = ""
+        recurrence_line = ""
         if recurrence == "weekly":
-            recurrence_part = " com recorrencia semanal"
-        if recurrence == "monthly":
-            recurrence_part = " com recorrencia mensal"
-        participants_part = f" com {participants}" if participants else ""
+            recurrence_line = "\n• Repetição: semanal"
+        elif recurrence == "monthly":
+            recurrence_line = "\n• Repetição: mensal"
         start_label = self._format_dt(payload["start"], "pt")
+        subj = payload.get("title") or ""
+        who_raw = (payload.get("organizer_name") or "").strip()
+        who = who_raw.title() if who_raw else who_raw
+        em = (payload.get("organizer_email") or "").strip()
+        dur = int(payload["duration_minutes"])
+        extra_guests = f"\n• Outros convidados: {others_txt}" if others_txt else ""
         return (
-            f"Perfeito, ja vou organizar isso. Confirmo a criacao da reuniao para {start_label}, "
-            f"com duracao de {payload['duration_minutes']} minutos{participants_part}{recurrence_part}?"
+            f"Posso registrar assim no calendário?\n\n"
+            f"• Título: «{subj}»\n"
+            f"• Data e hora: {start_label}\n"
+            f"• Duração: {dur} minutos\n"
+            f"• Responsável pelo pedido: {who} ({em}){extra_guests}{recurrence_line}\n\n"
+            f"Responda sim para confirmar ou não para cancelar."
         )
 
     def _en_create_confirm(self, payload: dict[str, Any]) -> str:
-        participants = ", ".join(payload.get("participants", [])) or "no participants"
+        others = self._participants_excluding_organizer(payload)
+        others_txt = ", ".join(others) if others else ""
         recurrence = payload.get("recurrence")
-        recurrence_part = ""
+        recurrence_line = ""
         if recurrence == "weekly":
-            recurrence_part = " weekly recurring"
-        if recurrence == "monthly":
-            recurrence_part = " monthly recurring"
+            recurrence_line = "\n• Recurrence: weekly"
+        elif recurrence == "monthly":
+            recurrence_line = "\n• Recurrence: monthly"
         start_label = self._format_dt(payload["start"], "en")
+        subj = payload.get("title") or ""
+        who_raw = (payload.get("organizer_name") or "").strip()
+        who = who_raw.title() if who_raw else who_raw
+        em = (payload.get("organizer_email") or "").strip()
+        dur = int(payload["duration_minutes"])
+        extra_guests = f"\n• Other guests: {others_txt}" if others_txt else ""
         return (
-            f"Do you confirm creating the meeting at {start_label} for {payload['duration_minutes']} minutes "
-            f"with {participants}{recurrence_part}?"
+            f"Here is what I will add to the calendar:\n\n"
+            f"• Title: «{subj}»\n"
+            f"• When: {start_label}\n"
+            f"• Duration: {dur} minutes\n"
+            f"• Requested by: {who} ({em}){extra_guests}{recurrence_line}\n\n"
+            f"Reply yes to confirm or no to cancel."
         )
 
     def _pt_create_done(self, event: dict[str, Any]) -> str:
-        summary = event.get("summary") or "Reuniao"
+        summary = event.get("summary") or "Reunião"
         raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
         when = self._format_dt(raw_start, "pt")
-        link = event.get("htmlLink")
-        if link:
-            return f"Perfeito! '{summary}' ficou agendada para {when}. Aqui esta o link: {link}"
-        return f"Perfeito! '{summary}' ficou agendada para {when}."
+        return f"Perfeito! «{summary}» ficou agendada para {when}. Veja os detalhes no Google Calendar quando quiser."
+
+    def _en_create_done(self, event: dict[str, Any]) -> str:
+        summary = event.get("summary") or "Meeting"
+        raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
+        when = self._format_dt(raw_start, "en")
+        return f"Done! '{summary}' is scheduled for {when}. You can open Google Calendar for full details."
 
     def _pt_reschedule_done(self, event: dict[str, Any]) -> str:
         summary = event.get("summary") or "Reuniao"
         raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
         when = self._format_dt(raw_start, "pt")
-        link = event.get("htmlLink")
-        if link:
-            return f"Feito! Reagendei '{summary}' para {when}. Link atualizado: {link}"
-        return f"Feito! Reagendei '{summary}' para {when}."
+        return f"Feito! Reagendei '{summary}' para {when}. Confira no Google Calendar."
+
+    def _en_reschedule_done(self, event: dict[str, Any]) -> str:
+        summary = event.get("summary") or "Meeting"
+        raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
+        when = self._format_dt(raw_start, "en")
+        return f"All set — '{summary}' is now at {when}. Check Google Calendar for the update."
+
+    def _es_create_done(self, event: dict[str, Any]) -> str:
+        summary = event.get("summary") or "Reunion"
+        raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
+        when = self._format_dt(raw_start, "es")
+        return f"Listo! '{summary}' quedo agendada para {when}. Revisa Google Calendar para los detalles."
+
+    def _es_reschedule_done(self, event: dict[str, Any]) -> str:
+        summary = event.get("summary") or "Reunion"
+        raw_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date"))
+        when = self._format_dt(raw_start, "es")
+        return f"Hecho! Reagende '{summary}' para {when}. Mira Google Calendar para confirmar."
 
     def _humanize_error(self, exc: Exception, language: str) -> str:
         raw = str(exc)
@@ -638,6 +782,20 @@ class ConversationService:
         if not suggestions:
             return "-"
         return ", ".join(self._format_dt(s.isoformat(), language) for s in suggestions)
+
+    def _persist_meeting_draft(self, state: ConversationState, merged: dict[str, Any]) -> None:
+        state.meeting_draft = MeetingDraft(
+            title=merged.get("title"),
+            organizer_name=merged.get("organizer_name"),
+            organizer_email=merged.get("organizer_email"),
+            start=merged.get("start"),
+            end=merged.get("end"),
+            duration_minutes=int(merged.get("duration_minutes") or 30),
+            participants=list(merged.get("participants") or []),
+            recurrence=merged.get("recurrence"),
+            notes=merged.get("notes"),
+            target_hint=merged.get("target_hint"),
+        )
 
     @staticmethod
     def _serialize_entities(entities: dict[str, Any]) -> dict[str, Any]:

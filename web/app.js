@@ -92,7 +92,8 @@ const UI_TEXTS = {
     contextNoPending: "Não pendente",
     contextYes: "Sim",
     contextNo: "Não",
-    welcomeAssistant: "Olá! Conecte-se ao Agora e me diga o que você precisa: criar, consultar, reagendar ou cancelar reuniões.",
+    welcomeAssistant:
+      "Olá! Para agendar, vou pedir seu nome, o assunto da reunião (esse texto vira o nome do evento no calendário), seu e-mail e data/hora. Também posso listar, reagendar ou cancelar. Links não são lidos em voz.",
     logConnecting: "Conexão com Agora em andamento.",
     logAlreadyConnected: "Já conectado no canal Agora.",
     logConnected: "Agora conectada no canal",
@@ -156,7 +157,8 @@ const UI_TEXTS = {
     contextNoPending: "Not pending",
     contextYes: "Yes",
     contextNo: "No",
-    welcomeAssistant: "Hello! Connect to Agora and tell me what you need: create, list, reschedule or cancel meetings.",
+    welcomeAssistant:
+      "Hello! To schedule, I'll ask your name, meeting subject, email, and date and time. I can also list, reschedule, or cancel. Calendar links are not read aloud.",
     logConnecting: "Connecting to Agora...",
     logAlreadyConnected: "Already connected to Agora channel.",
     logConnected: "Agora connected on channel",
@@ -220,7 +222,8 @@ const UI_TEXTS = {
     contextNoPending: "No pendiente",
     contextYes: "Sí",
     contextNo: "No",
-    welcomeAssistant: "¡Hola! Conéctate a Agora y dime qué necesitas: crear, consultar, reagendar o cancelar reuniones.",
+    welcomeAssistant:
+      "¡Hola! Para agendar pediré tu nombre, el asunto, tu correo y la fecha/hora. También puedo listar, reagendar o cancelar. No leo enlaces del calendario en voz alta.",
     logConnecting: "Conectando con Agora...",
     logAlreadyConnected: "Ya conectado al canal de Agora.",
     logConnected: "Agora conectada en el canal",
@@ -350,6 +353,7 @@ function renderProactiveSuggestions(items = []) {
 }
 
 function renderAgentTrace(trace) {
+  if (!agentTraceEl) return;
   agentTraceEl.innerHTML = "";
   const steps = trace?.steps || [];
   if (!steps.length) {
@@ -384,7 +388,8 @@ function createMessageBubble(role) {
   const timeEl = document.createElement("span");
   timeEl.textContent = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
   const body = document.createElement("div");
-  body.className = "text-sm leading-6 text-text-primary";
+  body.className =
+    "text-sm leading-6 text-text-primary whitespace-pre-line break-words";
   head.appendChild(roleEl);
   head.appendChild(timeEl);
   wrapper.appendChild(head);

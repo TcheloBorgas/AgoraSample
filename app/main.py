@@ -13,6 +13,15 @@ from app.routers.system_router import router as system_router
 configure_logging()
 
 app = FastAPI(title=settings.app_name)
+
+
+@app.middleware("http")
+async def ensure_utf8_charset(request, call_next):
+    response = await call_next(request)
+    ct = response.headers.get("content-type", "")
+    if ct.startswith("application/json") and "charset" not in ct.lower():
+        response.headers["content-type"] = "application/json; charset=utf-8"
+    return response
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],

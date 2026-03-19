@@ -15,10 +15,21 @@ class SchedulerService:
         self.calendar = calendar
         self.prioritization = prioritization
 
-    def list_meetings(self, when: datetime | None = None, query: str | None = None) -> list[dict[str, Any]]:
+    def list_meetings(
+        self,
+        when: datetime | None = None,
+        query: str | None = None,
+        *,
+        span: str = "day",
+    ) -> list[dict[str, Any]]:
         base = when or datetime.now()
-        day_start = base.replace(hour=0, minute=0, second=0, microsecond=0)
-        day_end = day_start + timedelta(days=1)
+        if span == "week":
+            wd = base.weekday()
+            day_start = (base - timedelta(days=wd)).replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=7)
+        else:
+            day_start = base.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_end = day_start + timedelta(days=1)
         return self.calendar.list_events(day_start, day_end, query=query)
 
     def create_meeting(
@@ -29,6 +40,8 @@ class SchedulerService:
         duration_minutes: int,
         participants: list[str],
         recurrence: str | None,
+        organizer_name: str | None = None,
+        organizer_email: str | None = None,
     ) -> tuple[dict[str, Any] | None, list[datetime]]:
         end = start + timedelta(minutes=duration_minutes)
         conflicts = self.calendar.find_conflicts(start, end)
@@ -36,7 +49,9 @@ class SchedulerService:
             suggestions = self._suggest_slots(user_id, start, duration_minutes)
             return None, suggestions
 
-        body = self._build_event_body(title, start, end, participants, recurrence)
+        body = self._build_event_body(
+            title, start, end, participants, recurrence, organizer_name=organizer_name, organizer_email=organizer_email
+        )
         event = self.calendar.create_event(body)
         self.prioritization.update_with_meeting(user_id, start, participants)
         return event, []
@@ -112,13 +127,26 @@ class SchedulerService:
         end: datetime,
         participants: list[str],
         recurrence: str | None,
+        organizer_name: str | None = None,
+        organizer_email: str | None = None,
     ) -> dict[str, Any]:
+        attendee_emails = [p for p in (participants or []) if isinstance(p, str) and "@" in p]
+        if organizer_email and organizer_email not in attendee_emails:
+            attendee_emails.append(organizer_email)
+        desc_lines: list[str] = []
+        if organizer_name:
+            desc_lines.append(f"Organizer name: {organizer_name}")
+        if organizer_email:
+            desc_lines.append(f"Contact email: {organizer_email}")
+        description = "\n".join(desc_lines) if desc_lines else None
         body: dict[str, Any] = {
             "summary": title,
             "start": {"dateTime": start.isoformat(), "timeZone": settings.timezone},
             "end": {"dateTime": end.isoformat(), "timeZone": settings.timezone},
-            "attendees": [{"email": p} for p in participants if "@" in p],
+            "attendees": [{"email": e} for e in attendee_emails],
         }
+        if description:
+            body["description"] = description
         if recurrence == "weekly":
             body["recurrence"] = ["RRULE:FREQ=WEEKLY"]
         if recurrence == "monthly":

@@ -8,6 +8,7 @@ from app.repositories.pattern_repository import MeetingPatternRepository
 from app.repositories.preference_repository import PreferenceRepository
 from app.schemas.proactive_suggestion import ProactiveSuggestion
 from app.services.language_service import LanguageService
+from app.services.intent_service import meeting_subject_is_invalid
 from app.services.scheduler_service import SchedulerService
 
 
@@ -52,33 +53,37 @@ class ProactiveSuggestionService:
                 if self._recent_created_action(recent_actions):
                     score += 0.1
                 if score >= 0.55:
-                    title = pattern.get("title", "Reuniao")
-                    suggestion_dt = now.replace(hour=pattern_dt.hour, minute=pattern_dt.minute, second=0, microsecond=0)
-                    if suggestion_dt < now + timedelta(minutes=20):
-                        suggestion_dt = suggestion_dt + timedelta(days=1)
-                    key = f"repeat:{title}:{suggestion_dt.date().isoformat()}"
-                    msg = self.language.in_language(
-                        f"Voce costuma agendar '{title}' perto deste horario. Quer que eu crie para {suggestion_dt.strftime('%d/%m as %H:%M')}?",
-                        f"You usually schedule '{title}' around this time. Want me to create it for {suggestion_dt.strftime('%Y-%m-%d %H:%M')}?",
-                        language,
-                    )
-                    candidates.append(
-                        ProactiveSuggestion(
-                            key=key,
-                            title="repeat_pattern",
-                            message=msg,
-                            score=min(score, 1.0),
-                            reason="historical_pattern_match",
-                            suggested_action="create_meeting",
-                            payload={
-                                "title": title,
-                                "start": suggestion_dt.isoformat(),
-                                "duration_minutes": int(pattern.get("duration_minutes", 30)),
-                                "participants": pattern.get("participants", []),
-                                "recurrence": pattern.get("recurrence"),
-                            },
+                    title = pattern.get("title") or ""
+                    if meeting_subject_is_invalid(title):
+                        title = ""
+                    if title:
+                        suggestion_dt = now.replace(hour=pattern_dt.hour, minute=pattern_dt.minute, second=0, microsecond=0)
+                        if suggestion_dt < now + timedelta(minutes=20):
+                            suggestion_dt = suggestion_dt + timedelta(days=1)
+                        key = f"repeat:{title}:{suggestion_dt.date().isoformat()}"
+                        msg = self.language.in_language(
+                            f"Você costuma agendar «{title}» perto deste horário. Quer que eu crie para {suggestion_dt.strftime('%d/%m às %H:%M')}?",
+                            f"You usually schedule '{title}' around this time. Want me to create it for {suggestion_dt.strftime('%Y-%m-%d %H:%M')}?",
+                            language,
+                            es_text=f"Suele programar «{title}» cerca de esta hora. ¿Quieres que la cree para {suggestion_dt.strftime('%Y-%m-%d %H:%M')}?",
                         )
-                    )
+                        candidates.append(
+                            ProactiveSuggestion(
+                                key=key,
+                                title="repeat_pattern",
+                                message=msg,
+                                score=min(score, 1.0),
+                                reason="historical_pattern_match",
+                                suggested_action="create_meeting",
+                                payload={
+                                    "title": title,
+                                    "start": suggestion_dt.isoformat(),
+                                    "duration_minutes": int(pattern.get("duration_minutes", 30)),
+                                    "participants": pattern.get("participants", []),
+                                    "recurrence": pattern.get("recurrence"),
+                                },
+                            )
+                        )
 
         if trigger in {"session_start", "after_list"} and top_hour is not None:
             today_events = self.scheduler.list_meetings(when=now)
@@ -86,9 +91,10 @@ class ProactiveSuggestionService:
             if not has_top_hour:
                 key = f"slot:{now.date().isoformat()}:{top_hour}"
                 msg = self.language.in_language(
-                    f"Seu horario mais frequente e por volta de {top_hour:02d}h. Deseja que eu proponha um horario livre nesse periodo?",
+                    f"Seu horário mais frequente é por volta das {top_hour:02d}h. Deseja que eu proponha um horário livre nesse período?",
                     f"Your most frequent slot is around {top_hour:02d}:00. Should I suggest an available time around that period?",
                     language,
+                    es_text=f"Tu horario más frecuente es alrededor de las {top_hour:02d}:00. ¿Quieres que sugiera una hora libre en ese período?",
                 )
                 candidates.append(
                     ProactiveSuggestion(

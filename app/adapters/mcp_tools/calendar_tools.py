@@ -26,14 +26,14 @@ class CalendarMcpTools:
             output_payload={"events": events},
         )
 
-    def list_events(self, date: str, query: str | None = None) -> ToolExecution:
+    def list_events(self, date: str, query: str | None = None, span: str = "day") -> ToolExecution:
         when = date_parser.isoparse(date)
-        events = self.scheduler.list_meetings(when=when, query=query)
+        events = self.scheduler.list_meetings(when=when, query=query, span=span)
         return ToolExecution(
             tool_name="list_events",
             success=True,
             summary=f"Listed {len(events)} events.",
-            input_payload={"date": date, "query": query},
+            input_payload={"date": date, "query": query, "span": span},
             output_payload={"events": events},
         )
 
@@ -45,6 +45,8 @@ class CalendarMcpTools:
         duration_minutes: int = 30,
         participants: list[str] | None = None,
         recurrence: str | None = None,
+        organizer_name: str | None = None,
+        organizer_email: str | None = None,
     ) -> ToolExecution:
         start_dt = date_parser.isoparse(start)
         event, suggestions = self.scheduler.create_meeting(
@@ -54,6 +56,8 @@ class CalendarMcpTools:
             duration_minutes=duration_minutes,
             participants=participants or [],
             recurrence=recurrence,
+            organizer_name=organizer_name,
+            organizer_email=organizer_email,
         )
         success = event is not None
         summary = "Calendar event created." if success else "Conflict detected, suggestions returned."
@@ -133,9 +137,15 @@ class CalendarMcpTools:
                 duration_minutes=int(args.get("duration_minutes", 30)),
                 participants=args.get("participants", []),
                 recurrence=args.get("recurrence"),
+                organizer_name=args.get("organizer_name"),
+                organizer_email=args.get("organizer_email"),
             )
         if normalized == "list_events":
-            return self.list_events(date=args.get("date", datetime.now().isoformat()), query=args.get("query"))
+            return self.list_events(
+                date=args.get("date", datetime.now().isoformat()),
+                query=args.get("query"),
+                span=str(args.get("span", "day")),
+            )
         if normalized == "reschedule_event":
             return self.reschedule_event(
                 user_id=args["user_id"],
