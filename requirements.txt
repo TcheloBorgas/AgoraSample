@@ -2,7 +2,7 @@ fastapi==0.116.1
 uvicorn==0.35.0
 pydantic==2.11.7
 pydantic-settings==2.10.1
-pymongo==4.14.1
+# pymongo==4.14.1  # opcional: só com USE_MONGO=true e Mongo ativo em app/core/database.py
 python-dotenv==1.1.1
 google-api-python-client==2.179.0
 google-auth-oauthlib==1.2.2

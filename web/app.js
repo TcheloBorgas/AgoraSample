@@ -324,11 +324,18 @@ function getBackendLangFromUi() {
   return uiLocale;
 }
 
+let __lastErrorPopupMsg = "";
+let __lastErrorPopupAt = 0;
+
 function showErrorPopup(message, title) {
   const modal = document.getElementById("errorModal");
   const bodyEl = document.getElementById("errorModalBody");
   const titleEl = document.getElementById("errorModalTitle");
   const msg = String(message || "").trim() || String(t("errorPopupUnknown"));
+  const now = Date.now();
+  if (msg === __lastErrorPopupMsg && now - __lastErrorPopupAt < 900) return;
+  __lastErrorPopupMsg = msg;
+  __lastErrorPopupAt = now;
   if (!modal || !bodyEl || !titleEl) {
     window.alert(msg);
     return;
@@ -870,7 +877,7 @@ voiceToggleBtnEl.addEventListener("click", async () => {
     setVoiceUiState("error");
     voiceToggleBtnEl.textContent = t("voiceToggleIdle");
     log(`${t("logVoiceError")}: ${detail}`);
-    showErrorPopup(`${t("logVoiceError")}\n\n${detail}`);
+    showErrorPopup(detail);
   }
 });
 
@@ -892,7 +899,7 @@ sendChatBtnEl.addEventListener("click", async () => {
     const detail = err?.message || String(err);
     setVoiceUiState("error");
     log(`${t("logBackendError")}: ${detail}`);
-    showErrorPopup(`${t("logBackendError")}\n\n${detail}`);
+    showErrorPopup(detail);
   }
 });
 

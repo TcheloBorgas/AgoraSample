@@ -11,6 +11,9 @@ class Settings(BaseSettings):
 
     mongo_uri: str = "mongodb://localhost:27017"
     mongo_db_name: str = "voice_assistant_mvp"
+    # true só depois de reativar pymongo em app/core/database.py
+    use_mongo: bool = Field(default=False, validation_alias="USE_MONGO")
+
 
     google_client_secret_file: str = "credentials.json"
     google_token_file: str = "data/google_token.json"
@@ -42,7 +45,7 @@ class Settings(BaseSettings):
     agora_cae_tts_elevenlabs_voice_id: str = Field(default="pNInz6obpgDQGcFmaJgB", validation_alias="AGORA_CAE_TTS_ELEVENLABS_VOICE_ID")
     agora_cae_tts_elevenlabs_model_id: str = Field(default="eleven_flash_v2_5", validation_alias="AGORA_CAE_TTS_ELEVENLABS_MODEL_ID")
     agora_cae_enabled: bool = Field(default=True, validation_alias="AGORA_CAE_ENABLED")
-    ollama_enabled: bool = Field(default=True, validation_alias="OLLAMA_ENABLED")
+    ollama_enabled: bool = Field(default=False, validation_alias="OLLAMA_ENABLED")
     ollama_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="mistral", validation_alias="OLLAMA_MODEL")
 

@@ -14,7 +14,8 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY app ./app
 COPY web ./web
-COPY data ./data
+# data/ costuma estar vazia ou só no .gitignore — criar no image para tokens/calendar em runtime
+RUN mkdir -p /app/data
 COPY run.py ./run.py
 
 EXPOSE 8000

@@ -1,4 +1,6 @@
-# Site estático em web/. O backend FastAPI corre à parte; no Netlify use SCHEDULER_API_BASE.
+# Site estático em web/. Backend FastAPI noutro host.
+# Netlify → Environment variables (Build):
+#   SCHEDULER_API_BASE = https://teu-fastapi.exemplo.com  (sem / no fim)
 [build]
   command = "node scripts/netlify-build-web.mjs"
   publish = "web"

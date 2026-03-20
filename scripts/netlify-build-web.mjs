@@ -21,7 +21,10 @@ redirectLines.push(`/*  /index.html  200`);
 
 fs.writeFileSync(path.join(webDir, "_redirects"), `${redirectLines.join("\n")}\n`, "utf8");
 
-const runtimeConfig = `/* Gerado por scripts/netlify-build-web.mjs — não editar no deploy */
+const runtimeConfig = `/* Gerado por scripts/netlify-build-web.mjs.
+ * Proxy /api no Netlify usa SCHEDULER_API_BASE (variável de build no painel).
+ * Local: descomente a linha abaixo se servires web/ sem o mesmo host do uvicorn. */
+// window.__SCHEDULER_API_BASE__ = "http://127.0.0.1:8000";
 window.__SCHEDULER_API_BASE__ = "";
 `;
 fs.writeFileSync(path.join(webDir, "runtime-config.js"), runtimeConfig, "utf8");

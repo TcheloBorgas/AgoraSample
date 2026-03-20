@@ -165,7 +165,7 @@ class CAEService:
                 {
                     "role": "system",
                     "content": (
-                        "You are a voice meeting assistant connected to Google Calendar and MongoDB memory. "
+                        "You are a voice meeting assistant connected to Google Calendar and session memory. "
                         "Always confirm create/reschedule/cancel actions."
                     ),
                 }
