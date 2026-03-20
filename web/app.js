@@ -24,6 +24,18 @@ function apiUrl(path) {
   return `${base}${p}`;
 }
 
+function parseHttpErrorBody(text, status) {
+  if (!text?.trim()) return status ? `HTTP ${status}` : "Erro de rede";
+  try {
+    const j = JSON.parse(text);
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail)) return j.detail.map((x) => (typeof x === "object" && x.msg) || JSON.stringify(x)).join("; ");
+    if (j.detail != null) return String(j.detail);
+    if (j.message) return String(j.message);
+  } catch (_e) {}
+  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
+}
+
 const logEl = document.getElementById("log");
 const sessionIdEl = document.getElementById("sessionId");
 const userIdEl = document.getElementById("userId");
@@ -105,6 +117,12 @@ const UI_TEXTS = {
       "Olá! Para agendar, vou pedir seu nome, o assunto da reunião (esse texto vira o nome do evento no calendário), seu e-mail e data/hora. Também posso listar, reagendar ou cancelar. Links não são lidos em voz.",
     logConnecting: "Conexão com Agora em andamento.",
     logAlreadyConnected: "Já conectado no canal Agora.",
+    logAgoraStepSession: "1/4 A pedir token ao backend…",
+    logAgoraStepJoin: "2/4 A entrar no canal RTC…",
+    logAgoraStepMic: "3/4 A abrir o microfone…",
+    logAgoraStepPublish: "4/4 A publicar áudio…",
+    logAgoraJoinHint:
+      "Se falhar aqui: token inválido ou expirado. No backend defina AGORA_APP_CERTIFICATE (Console Agora) em vez de só AGORA_TEMP_TOKEN.",
     logConnected: "Agora conectada no canal",
     logRemoteAudio: "Áudio remoto ativo",
     logCaeActive: "CAE ativo. Fale normalmente sem usar captura local.",
@@ -113,6 +131,9 @@ const UI_TEXTS = {
     logVoiceError: "Falha na captura de voz",
     logBackendError: "Falha no backend",
     logTypeMessage: "Digite uma mensagem para enviar.",
+    errorPopupTitle: "Erro",
+    errorPopupUnknown: "Ocorreu um erro sem mensagem detalhada.",
+    errorPopupClose: "Fechar",
   },
   "en-US": {
     brandText: "Voice Scheduling System",
@@ -178,6 +199,9 @@ const UI_TEXTS = {
     logVoiceError: "Voice capture failure",
     logBackendError: "Backend failure",
     logTypeMessage: "Type a message before sending.",
+    errorPopupTitle: "Error",
+    errorPopupUnknown: "An error occurred without a detailed message.",
+    errorPopupClose: "Close",
   },
   "es-419": {
     brandText: "Voice Scheduling System",
@@ -243,6 +267,9 @@ const UI_TEXTS = {
     logVoiceError: "Fallo en captura de voz",
     logBackendError: "Fallo del backend",
     logTypeMessage: "Escribe un mensaje antes de enviar.",
+    errorPopupTitle: "Error",
+    errorPopupUnknown: "Ocurrió un error sin mensaje detallado.",
+    errorPopupClose: "Cerrar",
   },
 };
 
@@ -258,6 +285,30 @@ function getSpeechLocaleFromUi() {
 function getBackendLangFromUi() {
   if (uiLocale === "es-419") return "es-ES";
   return uiLocale;
+}
+
+function showErrorPopup(message, title) {
+  const modal = document.getElementById("errorModal");
+  const bodyEl = document.getElementById("errorModalBody");
+  const titleEl = document.getElementById("errorModalTitle");
+  const msg = String(message || "").trim() || String(t("errorPopupUnknown"));
+  if (!modal || !bodyEl || !titleEl) {
+    window.alert(msg);
+    return;
+  }
+  titleEl.textContent = title || t("errorPopupTitle");
+  bodyEl.textContent = msg;
+  modal.classList.remove("hidden");
+  modal.classList.add("flex");
+  modal.setAttribute("aria-hidden", "false");
+}
+
+function hideErrorPopup() {
+  const modal = document.getElementById("errorModal");
+  if (!modal) return;
+  modal.classList.add("hidden");
+  modal.classList.remove("flex");
+  modal.setAttribute("aria-hidden", "true");
 }
 
 function log(message) {
@@ -295,6 +346,7 @@ function applyUiTranslations() {
     proactiveTitle: "proactiveTitle",
     traceTitle: "traceTitle",
     debugSummary: "debugSummary",
+    errorModalClose: "errorPopupClose",
   };
   Object.entries(map).forEach(([id, key]) => {
     const el = document.getElementById(id);
@@ -445,8 +497,9 @@ async function signalInterrupt() {
 
 async function getAgoraSession(sessionId) {
   const response = await fetch(apiUrl(`/api/system/agora/session/${sessionId}`));
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
+  const text = await response.text();
+  if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
+  return JSON.parse(text);
 }
 
 async function startCaeAgent(sessionId, channel, token, remoteUid) {
@@ -461,8 +514,9 @@ async function startCaeAgent(sessionId, channel, token, remoteUid) {
       language: getBackendLangFromUi(),
     }),
   });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
+  const text = await response.text();
+  if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
+  return JSON.parse(text);
 }
 
 async function connectAgora() {
@@ -480,6 +534,7 @@ async function connectAgora() {
   connectAgoraBtnEl.disabled = true;
   const sessionId = sessionIdEl.value.trim();
   try {
+    log(t("logAgoraStepSession"));
     const data = await getAgoraSession(sessionId);
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     agoraClient.on("user-published", async (user, mediaType) => {
@@ -489,8 +544,17 @@ async function connectAgora() {
         log(`${t("logRemoteAudio")} (uid=${user.uid}).`);
       }
     });
-    localRtcUid = await agoraClient.join(data.app_id, data.channel, data.token, data.uid);
+    log(t("logAgoraStepJoin"));
+    try {
+      localRtcUid = await agoraClient.join(data.app_id, data.channel, data.token, data.uid);
+    } catch (joinErr) {
+      const code = joinErr && typeof joinErr.code === "number" ? ` código Agora ${joinErr.code}` : "";
+      log(`${t("logAgoraJoinHint")} ${joinErr?.message || joinErr}${code}`);
+      throw joinErr;
+    }
+    log(t("logAgoraStepMic"));
     localTrack = await AgoraRTC.createMicrophoneAudioTrack();
+    log(t("logAgoraStepPublish"));
     await agoraClient.publish([localTrack]);
     isRtcConnected = true;
     setRtcStatus(true, `uid=${localRtcUid}`);
@@ -503,9 +567,9 @@ async function connectAgora() {
       } else {
         log(t("logCaeFallback"));
       }
-    } catch (_err) {
+    } catch (caeErr) {
       caeActive = false;
-      log(t("logCaeFallback"));
+      log(`${t("logCaeFallback")} — ${caeErr?.message || caeErr || ""}`);
     }
   } finally {
     isConnectingAgora = false;
@@ -655,8 +719,9 @@ async function transcribeRecordedAudio(wavBlob) {
   formData.append("file", wavBlob, "record.wav");
   formData.append("language", getSpeechLocaleFromUi());
     const response = await fetch(apiUrl("/api/system/stt/transcribe"), { method: "POST", body: formData });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json();
+  const ttxt = await response.text();
+  if (!response.ok) throw new Error(parseHttpErrorBody(ttxt, response.status));
+  return JSON.parse(ttxt);
 }
 
 async function startRecording() {
@@ -733,9 +798,11 @@ connectAgoraBtnEl.addEventListener("click", async () => {
   try {
     await connectAgora();
   } catch (err) {
+    const detail = err?.message || String(err);
     setRtcStatus(false, t("statusFailed"));
     setVoiceUiState("error");
-    log(err.message);
+    log(detail);
+    showErrorPopup(detail);
   }
 });
 
@@ -756,9 +823,11 @@ voiceToggleBtnEl.addEventListener("click", async () => {
     if (!window.speechSynthesis.speaking) setVoiceUiState("idle");
     voiceToggleBtnEl.textContent = t("voiceToggleIdle");
   } catch (err) {
+    const detail = err?.message || String(err);
     setVoiceUiState("error");
     voiceToggleBtnEl.textContent = t("voiceToggleIdle");
-    log(`${t("logVoiceError")}: ${err.message}`);
+    log(`${t("logVoiceError")}: ${detail}`);
+    showErrorPopup(`${t("logVoiceError")}\n\n${detail}`);
   }
 });
 
@@ -777,8 +846,10 @@ sendChatBtnEl.addEventListener("click", async () => {
   try {
     await sendMessage(text);
   } catch (err) {
+    const detail = err?.message || String(err);
     setVoiceUiState("error");
-    log(`${t("logBackendError")}: ${err.message}`);
+    log(`${t("logBackendError")}: ${detail}`);
+    showErrorPopup(`${t("logBackendError")}\n\n${detail}`);
   }
 });
 
@@ -813,3 +884,16 @@ addChatMessage("assistant", t("welcomeAssistant"));
 setInterval(() => {
   pollVoiceState();
 }, 2500);
+
+(function setupErrorModal() {
+  const modal = document.getElementById("errorModal");
+  const closeBtn = document.getElementById("errorModalClose");
+  closeBtn?.addEventListener("click", () => hideErrorPopup());
+  modal?.addEventListener("click", (e) => {
+    if (e.target === modal) hideErrorPopup();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key !== "Escape") return;
+    if (modal && !modal.classList.contains("hidden")) hideErrorPopup();
+  });
+})();

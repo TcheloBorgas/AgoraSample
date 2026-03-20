@@ -83,7 +83,7 @@ def get_agora_debug(agora: AgoraClient = Depends(get_agora_client)):
         if not uid_ok:
             warnings.append("UID invalido, use inteiro >= 0.")
         if not token_ok:
-            warnings.append("Token vazio/curto; gere novo RTC Temp Token.")
+            warnings.append("Token vazio/curto; defina AGORA_APP_CERTIFICATE ou AGORA_TEMP_TOKEN.")
         if session.channel != (settings.agora_fixed_channel or session.channel):
             warnings.append("Canal efetivo diferente do canal fixo esperado.")
 
@@ -109,8 +109,8 @@ def get_agora_debug(agora: AgoraClient = Depends(get_agora_client)):
             },
             "warnings": warnings,
             "hint": (
-                "Se houver invalid token/vendor key no browser, gere novo token no mesmo projeto "
-                "do App ID e para exatamente o mesmo channel."
+                "Preferir AGORA_APP_CERTIFICATE (Console Agora, mesmo projeto do App ID) para tokens que renovam a cada pedido. "
+                "AGORA_TEMP_TOKEN expira em minutos. Netlify: defina SCHEDULER_API_BASE para o backend que tem estas variáveis."
             ),
         }
     except Exception as exc:  # noqa: BLE001

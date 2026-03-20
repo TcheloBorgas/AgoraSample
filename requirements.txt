@@ -13,3 +13,4 @@ python-dateutil==2.9.0.post0
 protobuf==4.25.8
 SpeechRecognition==3.10.4
 python-multipart==0.0.20
+agora-token-builder==1.0.0

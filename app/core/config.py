@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     google_calendar_id: str = "primary"
 
     agora_app_id: str = ""
+    agora_app_certificate: str = Field(default="", validation_alias="AGORA_APP_CERTIFICATE")
     agora_temp_token: str = ""
     agora_channel_prefix: str = "assistant-voice"
     agora_fixed_channel: str = ""
