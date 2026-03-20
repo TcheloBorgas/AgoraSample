@@ -881,6 +881,21 @@ class ConversationService:
                 "Creation failed because of a timezone configuration issue. I fixed this in the system; please retry.",
                 language,
             )
+        if (
+            "browser" in lowered
+            or "navegador" in lowered
+            or "google_token_json" in lowered
+            or ("oauth" in lowered and ("servidor" in lowered or "server" in lowered))
+        ):
+            return self.language.in_language(
+                "O servidor não pode abrir o login do Google. Coloque o token OAuth em GOOGLE_TOKEN_JSON "
+                "(conteúdo de data/google_token.json gerado no seu PC) ou use GOOGLE_TOKEN_FILE montado no deploy.",
+                "This server cannot open Google sign-in. Put the OAuth token in GOOGLE_TOKEN_JSON "
+                "(contents of data/google_token.json from your PC) or mount GOOGLE_TOKEN_FILE on the host.",
+                language,
+                es_text="Este servidor no puede abrir el login de Google. Use GOOGLE_TOKEN_JSON "
+                "(contenido de data/google_token.json generado en su PC) o monte GOOGLE_TOKEN_FILE.",
+            )
         return raw
 
     def _format_dt(self, value: Any, language: str) -> str:

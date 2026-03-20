@@ -20,6 +20,8 @@ class Settings(BaseSettings):
     # JSON OAuth: texto JSON (uma linha, começa com "{") OU caminho para ficheiro (ex.: /etc/secrets/google-oauth.json).
     google_client_secret_json: str = ""
     google_token_file: str = "data/google_token.json"
+    # Token OAuth já autorizado (conteúdo de google_token.json), para servidores sem browser.
+    google_token_json: str = ""
     google_calendar_id: str = "primary"
 
     agora_app_id: str = ""

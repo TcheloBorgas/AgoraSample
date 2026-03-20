@@ -16,6 +16,30 @@ from app.core.config import settings
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
 
+_OAUTH_HEADLESS_ERR_PT = (
+    "Calendário Google: neste servidor não há navegador para login OAuth. "
+    "Num PC, execute a app uma vez, faça login no Google e copie o conteúdo de data/google_token.json "
+    "para a variável GOOGLE_TOKEN_JSON (ou monte esse ficheiro no path de GOOGLE_TOKEN_FILE)."
+)
+_OAUTH_HEADLESS_ERR_EN = (
+    "Google Calendar: this server has no browser for OAuth. Run the app once on your PC, sign in to Google, "
+    "then copy data/google_token.json into GOOGLE_TOKEN_JSON (or mount it at GOOGLE_TOKEN_FILE)."
+)
+
+
+def _allow_interactive_oauth_browser() -> bool:
+    """run_local_server só em desenvolvimento local; em Render/produção exige token pré-gerado."""
+    flag = os.getenv("GOOGLE_OAUTH_ALLOW_LOCAL_SERVER", "").strip().lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    if flag in ("0", "false", "no"):
+        return False
+    if settings.app_env == "production":
+        return False
+    if os.getenv("RENDER", "").lower() == "true":
+        return False
+    return True
+
 
 def _load_oauth_client_config_from_env_value(raw: str) -> dict[str, Any]:
     """GOOGLE_CLIENT_SECRET_JSON: JSON inline (começa com `{`) ou caminho para um ficheiro .json."""
@@ -87,6 +111,24 @@ class GoogleCalendarClient:
     def __init__(self) -> None:
         self._service = None
 
+    def _load_user_credentials(self, token_path: Path) -> Credentials | None:
+        raw = (settings.google_token_json or "").strip()
+        if raw:
+            try:
+                return Credentials.from_authorized_user_info(json.loads(raw), SCOPES)
+            except json.JSONDecodeError as exc:
+                raise ValueError("GOOGLE_TOKEN_JSON nao e um JSON valido.") from exc
+        if token_path.is_file():
+            return Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        return None
+
+    def _persist_token(self, token_path: Path, creds: Credentials) -> None:
+        try:
+            token_path.parent.mkdir(parents=True, exist_ok=True)
+            token_path.write_text(creds.to_json(), encoding="utf-8")
+        except OSError:
+            pass
+
     def _ensure_service(self):
         if self._service is not None:
             return self._service
@@ -94,29 +136,41 @@ class GoogleCalendarClient:
         token_path = Path(settings.google_token_file)
         token_path.parent.mkdir(parents=True, exist_ok=True)
 
-        creds = None
-        if token_path.exists():
-            creds = Credentials.from_authorized_user_file(str(token_path), SCOPES)
+        creds = self._load_user_credentials(token_path)
 
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
-            else:
-                secret_json = (settings.google_client_secret_json or "").strip()
-                if secret_json:
-                    client_cfg = _load_oauth_client_config_from_env_value(secret_json)
-                    flow = InstalledAppFlow.from_client_config(client_cfg, SCOPES)
-                else:
-                    path = _resolve_google_client_secret_path()
-                    if not path:
-                        raise FileNotFoundError(
-                            "Arquivo de credenciais Google nao encontrado. "
-                            "Defina GOOGLE_CLIENT_SECRET_JSON (JSON numa linha) ou coloque o ficheiro "
-                            f"({settings.google_client_secret_file}) num dos paths tentados."
-                        )
-                    flow = InstalledAppFlow.from_client_secrets_file(path, SCOPES)
-                creds = flow.run_local_server(port=0)
-            token_path.write_text(creds.to_json(), encoding="utf-8")
+        if creds and creds.valid:
+            self._service = build("calendar", "v3", credentials=creds)
+            return self._service
+
+        if creds and creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            self._persist_token(token_path, creds)
+            self._service = build("calendar", "v3", credentials=creds)
+            return self._service
+
+        if not _allow_interactive_oauth_browser():
+            raise RuntimeError(_OAUTH_HEADLESS_ERR_PT)
+
+        secret_json = (settings.google_client_secret_json or "").strip()
+        if secret_json:
+            client_cfg = _load_oauth_client_config_from_env_value(secret_json)
+            flow = InstalledAppFlow.from_client_config(client_cfg, SCOPES)
+        else:
+            path = _resolve_google_client_secret_path()
+            if not path:
+                raise FileNotFoundError(
+                    "Arquivo de credenciais Google nao encontrado. "
+                    "Defina GOOGLE_CLIENT_SECRET_JSON (JSON numa linha) ou coloque o ficheiro "
+                    f"({settings.google_client_secret_file}) num dos paths tentados."
+                )
+            flow = InstalledAppFlow.from_client_secrets_file(path, SCOPES)
+        try:
+            creds = flow.run_local_server(port=0)
+        except Exception as exc:  # noqa: BLE001
+            if "browser" in str(exc).lower():
+                raise RuntimeError(_OAUTH_HEADLESS_ERR_PT) from exc
+            raise
+        self._persist_token(token_path, creds)
 
         self._service = build("calendar", "v3", credentials=creds)
         return self._service

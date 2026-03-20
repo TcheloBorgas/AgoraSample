@@ -27,6 +27,15 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 Abra `http://127.0.0.1:8000`.
 
+### Google Calendar: token para o Render (sem browser no servidor)
+1. No `.env` local, defina **`GOOGLE_CLIENT_SECRET_JSON`** com o JSON `{"installed":{...}}` (ou use o ficheiro `google-oauth.json` na raiz).
+2. No PC, na raiz do projeto:
+   ```bash
+   python scripts/google_oauth_local_login.py
+   ```
+   Autorize no browser. Isto cria **`data/google_token.json`**.
+3. No Render: **`GOOGLE_CLIENT_SECRET_JSON`** (o mesmo JSON `installed`) + **`GOOGLE_TOKEN_JSON`** = conteúdo **inteiro** de `data/google_token.json` (colar numa linha). Não use template vazio.
+
 ### Netlify (só o front em `web/`)
 O deploy publica ficheiros estáticos; o **FastAPI tem de estar noutro host** (Railway, Render, VPS, etc.). No Netlify, em *Site configuration → Environment variables*, crie **`SCHEDULER_API_BASE`** com a URL do backend (ex.: `https://seu-app.railway.app`, sem `/` no fim). O build gera `web/_redirects` para fazer **proxy** de `/api/*` para esse servidor, e a UI chama `/api/...` na mesma origem (`*.netlify.app`). O backend já permite CORS `*`; mesmo assim o proxy evita surpresas em browsers.
 
