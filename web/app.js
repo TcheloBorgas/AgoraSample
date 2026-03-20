@@ -24,18 +24,6 @@ function apiUrl(path) {
   return `${base}${p}`;
 }
 
-function parseHttpErrorBody(text, status) {
-  if (!text?.trim()) return status ? `HTTP ${status}` : "Erro de rede";
-  try {
-    const j = JSON.parse(text);
-    if (typeof j.detail === "string") return j.detail;
-    if (Array.isArray(j.detail)) return j.detail.map((x) => (typeof x === "object" && x.msg) || JSON.stringify(x)).join("; ");
-    if (j.detail != null) return String(j.detail);
-    if (j.message) return String(j.message);
-  } catch (_e) {}
-  return text.length > 500 ? `${text.slice(0, 500)}…` : text;
-}
-
 const logEl = document.getElementById("log");
 const sessionIdEl = document.getElementById("sessionId");
 const userIdEl = document.getElementById("userId");
@@ -134,6 +122,10 @@ const UI_TEXTS = {
     errorPopupTitle: "Erro",
     errorPopupUnknown: "Ocorreu um erro sem mensagem detalhada.",
     errorPopupClose: "Fechar",
+    errHtmlInsteadOfApi:
+      "O servidor devolveu uma página HTML (como «Page not found» do Netlify) em vez da API JSON.\n\n" +
+      "• Netlify: em Site → Environment variables crie SCHEDULER_API_BASE com a URL do FastAPI (ex.: https://seu-app.railway.app), sem barra no fim, e faça um deploy novo.\n" +
+      "• Teste local: use a mesma origem do uvicorn ou defina window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' antes de carregar app.js.",
   },
   "en-US": {
     brandText: "Voice Scheduling System",
@@ -202,6 +194,10 @@ const UI_TEXTS = {
     errorPopupTitle: "Error",
     errorPopupUnknown: "An error occurred without a detailed message.",
     errorPopupClose: "Close",
+    errHtmlInsteadOfApi:
+      "The server returned an HTML page (e.g. Netlify «Page not found») instead of JSON.\n\n" +
+      "• Netlify: Site → Environment variables → set SCHEDULER_API_BASE to your FastAPI public URL (no trailing slash), then redeploy.\n" +
+      "• Local: serve from uvicorn or set window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' before app.js.",
   },
   "es-419": {
     brandText: "Voice Scheduling System",
@@ -270,11 +266,52 @@ const UI_TEXTS = {
     errorPopupTitle: "Error",
     errorPopupUnknown: "Ocurrió un error sin mensaje detallado.",
     errorPopupClose: "Cerrar",
+    errHtmlInsteadOfApi:
+      "El servidor devolvió HTML (p. ej. «Page not found» de Netlify) en lugar de la API JSON.\n\n" +
+      "• Netlify: Site → Environment variables → SCHEDULER_API_BASE = URL pública del FastAPI (sin barra final) y nuevo deploy.\n" +
+      "• Local: mismo origen que uvicorn o window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' antes de app.js.",
   },
 };
 
 function t(key) {
   return UI_TEXTS[uiLocale]?.[key] ?? UI_TEXTS["pt-BR"][key] ?? key;
+}
+
+function looksLikeHtmlPayload(text) {
+  const raw = (text || "").trimStart();
+  const head = raw.slice(0, 96).toLowerCase();
+  if (head.startsWith("<!doctype") || head.startsWith("<html")) return true;
+  if (/page not found/i.test(raw) && /netlify/i.test(raw)) return true;
+  return false;
+}
+
+function parseHttpErrorBody(text, status) {
+  if (!text?.trim()) return status ? `HTTP ${status}` : t("errorPopupUnknown");
+  if (looksLikeHtmlPayload(text)) return t("errHtmlInsteadOfApi");
+  try {
+    const j = JSON.parse(text);
+    if (typeof j.detail === "string") return j.detail;
+    if (Array.isArray(j.detail)) return j.detail.map((x) => (typeof x === "object" && x.msg) || JSON.stringify(x)).join("; ");
+    if (j.detail != null) return String(j.detail);
+    if (j.message) return String(j.message);
+  } catch (_e) {}
+  const snippet = text.length > 400 ? `${text.slice(0, 400)}…` : text;
+  return snippet;
+}
+
+function parseJsonResponse(text, context) {
+  if (looksLikeHtmlPayload(text)) {
+    throw new Error(parseHttpErrorBody(text, 0));
+  }
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    if ((text || "").trimStart().startsWith("<")) {
+      throw new Error(parseHttpErrorBody(text, 0));
+    }
+    const hint = context ? `${context}: ` : "";
+    throw new Error(`${hint}${e instanceof Error ? e.message : String(e)}`);
+  }
 }
 
 function getSpeechLocaleFromUi() {
@@ -499,7 +536,7 @@ async function getAgoraSession(sessionId) {
   const response = await fetch(apiUrl(`/api/system/agora/session/${sessionId}`));
   const text = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
-  return JSON.parse(text);
+  return parseJsonResponse(text, "Sessão Agora");
 }
 
 async function startCaeAgent(sessionId, channel, token, remoteUid) {
@@ -516,7 +553,7 @@ async function startCaeAgent(sessionId, channel, token, remoteUid) {
   });
   const text = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
-  return JSON.parse(text);
+  return parseJsonResponse(text, "CAE");
 }
 
 async function connectAgora() {
@@ -613,7 +650,7 @@ async function sendMessage(message) {
   });
   if (!response.ok) {
     const errText = await response.text();
-    throw new Error(errText || `HTTP ${response.status}`);
+    throw new Error(parseHttpErrorBody(errText, response.status));
   }
 
   const streamBubble = createStreamingAssistantMessage();
@@ -625,6 +662,9 @@ async function sendMessage(message) {
   let finalPayload = null;
 
   const consumeSseBuffer = () => {
+    if (buffer.length >= 32 && looksLikeHtmlPayload(buffer)) {
+      throw new Error(parseHttpErrorBody(buffer, response.status));
+    }
     const events = buffer.split("\n\n");
     buffer = events.pop() || "";
     for (const eventChunk of events) {
@@ -662,7 +702,10 @@ async function sendMessage(message) {
     }
   }
 
-  if (!finalPayload) throw new Error("Final payload missing.");
+  if (!finalPayload) {
+    if (looksLikeHtmlPayload(buffer)) throw new Error(parseHttpErrorBody(buffer, response.status));
+    throw new Error("Final payload missing.");
+  }
 
   currentLanguage = finalPayload.language === "en" ? "en-US" : finalPayload.language === "es" ? "es-ES" : "pt-BR";
   streamBubble.set(finalPayload.response_text);
@@ -721,7 +764,7 @@ async function transcribeRecordedAudio(wavBlob) {
     const response = await fetch(apiUrl("/api/system/stt/transcribe"), { method: "POST", body: formData });
   const ttxt = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(ttxt, response.status));
-  return JSON.parse(ttxt);
+  return parseJsonResponse(ttxt, "Transcrição");
 }
 
 async function startRecording() {
