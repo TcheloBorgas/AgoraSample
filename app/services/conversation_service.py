@@ -763,8 +763,8 @@ class ConversationService:
             )
         if "credentials" in lowered and "google" in lowered:
             return self.language.in_language(
-                "Nao encontrei as credenciais do Google Calendar. Verifique GOOGLE_CLIENT_SECRET_FILE no .env.",
-                "Google Calendar credentials were not found. Check GOOGLE_CLIENT_SECRET_FILE in .env.",
+                "Nao encontrei as credenciais do Google Calendar. Defina GOOGLE_CLIENT_SECRET_JSON ou o ficheiro em GOOGLE_CLIENT_SECRET_FILE.",
+                "Google Calendar credentials were not found. Set GOOGLE_CLIENT_SECRET_JSON or GOOGLE_CLIENT_SECRET_FILE.",
                 language,
             )
         if "network" in lowered:

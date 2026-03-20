@@ -15,7 +15,10 @@ class Settings(BaseSettings):
     use_mongo: bool = Field(default=False, validation_alias="USE_MONGO")
 
 
-    google_client_secret_file: str = "credentials.json"
+    # Ficheiro local (nome padrão alinhado com o Secret File típico). Em produção use GOOGLE_CLIENT_SECRET_JSON.
+    google_client_secret_file: str = "google-oauth.json"
+    # JSON OAuth: texto JSON (uma linha, começa com "{") OU caminho para ficheiro (ex.: /etc/secrets/google-oauth.json).
+    google_client_secret_json: str = ""
     google_token_file: str = "data/google_token.json"
     google_calendar_id: str = "primary"
 

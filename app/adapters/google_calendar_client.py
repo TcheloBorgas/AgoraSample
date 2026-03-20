@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -14,6 +15,72 @@ from googleapiclient.errors import HttpError
 from app.core.config import settings
 
 SCOPES = ["https://www.googleapis.com/auth/calendar"]
+
+
+def _load_oauth_client_config_from_env_value(raw: str) -> dict[str, Any]:
+    """GOOGLE_CLIENT_SECRET_JSON: JSON inline (começa com `{`) ou caminho para um ficheiro .json."""
+    s = (raw or "").strip()
+    if not s:
+        raise ValueError("GOOGLE_CLIENT_SECRET_JSON esta vazia.")
+    if s.startswith("{"):
+        try:
+            return cast(dict[str, Any], json.loads(s))
+        except json.JSONDecodeError as exc:
+            raise ValueError("GOOGLE_CLIENT_SECRET_JSON nao e JSON valido (inline).") from exc
+
+    path = Path(s)
+    candidates = [path, Path("/etc/secrets") / path.name, Path("/opt/render/project/src") / path.name, Path.cwd() / path.name]
+    seen: set[str] = set()
+    for p in candidates:
+        key = str(p)
+        if key in seen:
+            continue
+        seen.add(key)
+        if p.is_file():
+            try:
+                return cast(dict[str, Any], json.loads(p.read_text(encoding="utf-8")))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"OAuth client secret em {p} nao e JSON valido.") from exc
+
+    raise FileNotFoundError(
+        f"GOOGLE_CLIENT_SECRET_JSON aponta para um ficheiro que nao existe: {s}. "
+        "Monte o Secret File no Render ou cola o JSON completo na env (texto que começa com {{)."
+    )
+
+
+def _resolve_google_client_secret_path() -> str | None:
+    """Caminhos usuais no Render: Python nativo por vezes expõe secrets na raiz do projeto, não só em /etc/secrets."""
+    raw = (settings.google_client_secret_file or "").strip()
+    base = os.path.basename(raw) if raw else ""
+    candidates: list[str] = []
+    if raw:
+        candidates.append(raw)
+    if base:
+        candidates.extend(
+            [
+                f"/etc/secrets/{base}",
+                str(Path("/opt/render/project/src") / base),
+                str(Path.cwd() / base),
+            ]
+        )
+    for extra in ("google-oauth.json", "credentials.json"):
+        p = f"/etc/secrets/{extra}"
+        if p not in candidates:
+            candidates.append(p)
+        p2 = str(Path("/opt/render/project/src") / extra)
+        if p2 not in candidates:
+            candidates.append(p2)
+        p3 = str(Path.cwd() / extra)
+        if p3 not in candidates:
+            candidates.append(p3)
+    seen: set[str] = set()
+    for p in candidates:
+        if not p or p in seen:
+            continue
+        seen.add(p)
+        if os.path.isfile(p):
+            return p
+    return None
 
 
 class GoogleCalendarClient:
@@ -35,11 +102,19 @@ class GoogleCalendarClient:
             if creds and creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             else:
-                if not os.path.exists(settings.google_client_secret_file):
-                    raise FileNotFoundError(
-                        f"Arquivo de credenciais Google nao encontrado: {settings.google_client_secret_file}"
-                    )
-                flow = InstalledAppFlow.from_client_secrets_file(settings.google_client_secret_file, SCOPES)
+                secret_json = (settings.google_client_secret_json or "").strip()
+                if secret_json:
+                    client_cfg = _load_oauth_client_config_from_env_value(secret_json)
+                    flow = InstalledAppFlow.from_client_config(client_cfg, SCOPES)
+                else:
+                    path = _resolve_google_client_secret_path()
+                    if not path:
+                        raise FileNotFoundError(
+                            "Arquivo de credenciais Google nao encontrado. "
+                            "Defina GOOGLE_CLIENT_SECRET_JSON (JSON numa linha) ou coloque o ficheiro "
+                            f"({settings.google_client_secret_file}) num dos paths tentados."
+                        )
+                    flow = InstalledAppFlow.from_client_secrets_file(path, SCOPES)
                 creds = flow.run_local_server(port=0)
             token_path.write_text(creds.to_json(), encoding="utf-8")
 
