@@ -117,10 +117,86 @@ class ConversationService:
             self.turns.mark_revision_applied(session_id)
 
         if state.pending_confirmation and intent_result.intent not in {"confirm_yes", "confirm_no"}:
-            state.pending_confirmation = None
-            response = self._handle_intent(
-                state, user_id, intent_result.intent, intent_result.entities, intent_result.missing_fields, message, trace
-            )
+            pc = state.pending_confirmation
+            if pc.get("action") == "create":
+                rev = self.intents.try_revise_pending_create_payload(
+                    self.intents.normalize_user_text(message),
+                    state.language,
+                    pc.get("payload") or {},
+                )
+                if rev:
+                    new_payload = {**pc["payload"]}
+                    for key, val in rev.items():
+                        if key == "start" and val is not None:
+                            new_payload["start"] = val.isoformat() if isinstance(val, datetime) else val
+                        else:
+                            new_payload[key] = val
+                    state.pending_confirmation = {"action": "create", "payload": new_payload}
+                    text = self.language.in_language(
+                        self._pt_create_confirm(new_payload),
+                        self._en_create_confirm(new_payload),
+                        state.language,
+                        es_text=self._es_create_confirm(new_payload),
+                    )
+                    self.trace_service.step(
+                        trace,
+                        "revise_pending_create",
+                        "User adjusted draft while awaiting confirmation; showing updated summary.",
+                        data={"keys": list(rev.keys())},
+                    )
+                    response = self._build_response(state, "create_meeting", text, True, False, {"draft": new_payload})
+                else:
+                    topic_switch = {
+                        "list_meetings",
+                        "reschedule_meeting",
+                        "cancel_meeting",
+                        "set_language",
+                        "repeat_last_meeting",
+                    }
+                    if intent_result.intent in topic_switch:
+                        state.pending_confirmation = None
+                        response = self._handle_intent(
+                            state,
+                            user_id,
+                            intent_result.intent,
+                            intent_result.entities,
+                            intent_result.missing_fields,
+                            message,
+                            trace,
+                        )
+                    elif intent_result.intent == "unknown":
+                        text = self.language.in_language(
+                            "Não entendi. Para confirmar esta reunião diga sim ou não. "
+                            "Se quiser mudar horário ou título, diga o novo valor.",
+                            "I did not understand. Say yes or no to confirm. "
+                            "To change the time or title, say the new details.",
+                            state.language,
+                            es_text="No entendí. Di sí o no para confirmar. "
+                            "Si quieres cambiar la hora o el título, dilo.",
+                        )
+                        self.trace_service.step(
+                            trace,
+                            "pending_confirm_clarify",
+                            "Unknown utterance during pending confirmation; kept pending.",
+                            status="warning",
+                        )
+                        response = self._build_response(state, "unknown", text, True, False)
+                    else:
+                        state.pending_confirmation = None
+                        response = self._handle_intent(
+                            state,
+                            user_id,
+                            intent_result.intent,
+                            intent_result.entities,
+                            intent_result.missing_fields,
+                            message,
+                            trace,
+                        )
+            else:
+                state.pending_confirmation = None
+                response = self._handle_intent(
+                    state, user_id, intent_result.intent, intent_result.entities, intent_result.missing_fields, message, trace
+                )
         elif state.pending_confirmation:
             response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace)
         elif intent_result.intent == "confirm_yes" and state.pending_confirmation is None and state.meeting_draft is not None:
@@ -281,6 +357,7 @@ class ConversationService:
                     self._pt_create_confirm(payload),
                     self._en_create_confirm(payload),
                     state.language,
+                    es_text=self._es_create_confirm(payload),
                 )
                 self.trace_service.step(trace, "propose_action", "Prepared create meeting confirmation.", data={"action": "create", "payload": payload})
                 return self._build_response(state, intent, text, True, False, {"draft": payload})
@@ -714,6 +791,31 @@ class ConversationService:
             f"• Duration: {dur} minutes\n"
             f"• Requested by: {who} ({em}){extra_guests}{recurrence_line}\n\n"
             f"Reply yes to confirm or no to cancel."
+        )
+
+    def _es_create_confirm(self, payload: dict[str, Any]) -> str:
+        others = self._participants_excluding_organizer(payload)
+        others_txt = ", ".join(others) if others else ""
+        recurrence = payload.get("recurrence")
+        recurrence_line = ""
+        if recurrence == "weekly":
+            recurrence_line = "\n• Repetición: semanal"
+        elif recurrence == "monthly":
+            recurrence_line = "\n• Repetición: mensual"
+        start_label = self._format_dt(payload["start"], "es")
+        subj = payload.get("title") or ""
+        who_raw = (payload.get("organizer_name") or "").strip()
+        who = who_raw.title() if who_raw else who_raw
+        em = (payload.get("organizer_email") or "").strip()
+        dur = int(payload["duration_minutes"])
+        extra_guests = f"\n• Otros invitados: {others_txt}" if others_txt else ""
+        return (
+            f"¿Registro así en el calendario?\n\n"
+            f"• Título: «{subj}»\n"
+            f"• Fecha y hora: {start_label}\n"
+            f"• Duración: {dur} minutos\n"
+            f"• Solicitante: {who} ({em}){extra_guests}{recurrence_line}\n\n"
+            f"Di sí para confirmar o no para cancelar."
         )
 
     def _pt_create_done(self, event: dict[str, Any]) -> str:

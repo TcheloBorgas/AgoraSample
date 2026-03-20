@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from dateparser.search import search_dates
+from dateutil import parser as date_parser
 
 from app.core.config import settings
 from app.models.domain import MeetingDraft
@@ -492,6 +493,131 @@ class IntentService:
                 continue
             out[k] = v
         return out
+
+    def try_revise_pending_create_payload(
+        self, text: str, language: str, payload: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """Durante confirmação final: extrair novo horário/título/duração a partir de correções curtas."""
+        if not payload or not payload.get("start"):
+            return None
+        normalized = self.normalize_user_text(text)
+        lowered = normalized.lower()
+        if not normalized:
+            return None
+
+        bail_phrases = (
+            "cancela",
+            "cancelar",
+            "esquece",
+            "nao quero mais",
+            "não quero mais",
+            "listar",
+            "consultar",
+            "reagend",
+            "desmarca",
+        )
+        if any(p in lowered for p in bail_phrases):
+            return None
+
+        time_cues = (
+            "horario",
+            "horário",
+            "hora",
+            "às",
+            " as ",
+            "as ",
+            "at ",
+            "manhã",
+            "manha",
+            "tarde",
+            "noite",
+            "mudar",
+            "mude",
+            "alter",
+            "troca",
+            "corrig",
+            "errado",
+            "em vez",
+            "na verdade",
+        )
+        has_digit_time = bool(
+            re.search(r"\b\d{1,2}\s*:\s*\d{2}\b", lowered)
+            or re.search(r"\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b", lowered)
+            or self._extract_explicit_clock_time(normalized) is not None
+            or re.search(r"\b\d{1,2}\s*h\b", lowered)
+        )
+        has_time_signal = any(c in lowered for c in time_cues) or has_digit_time
+        explicit_title = self._extract_explicit_subject(normalized)
+        dur_explicit = bool(re.search(r"\b(\d{1,3})\s*(min|minute|minuto)", lowered))
+        dur_m = self._extract_duration_minutes(normalized)
+
+        if not has_time_signal and explicit_title is None and not dur_explicit:
+            return None
+
+        try:
+            anchor_start = date_parser.isoparse(str(payload["start"]))
+        except (ValueError, TypeError):
+            return None
+        if anchor_start.tzinfo is not None:
+            anchor_start = anchor_start.replace(tzinfo=None)
+
+        now = datetime.now()
+        lang_map = {"pt": ["pt", "en"], "en": ["en", "pt"], "es": ["es", "en"]}
+        languages = lang_map.get(language, [language, "en"])
+        date_hits = search_dates(
+            normalized,
+            languages=languages,
+            settings={
+                "PREFER_DATES_FROM": "future",
+                "RETURN_AS_TIMEZONE_AWARE": False,
+                "TIMEZONE": settings.timezone,
+            },
+        )
+        start = date_hits[0][1] if date_hits else None
+        clock = self._extract_explicit_clock_time(normalized)
+
+        if start is None and clock:
+            base_date = anchor_start.date()
+            if "depois de amanha" in lowered or "depois de amanhã" in lowered:
+                base_date = (now + timedelta(days=2)).date()
+            elif "amanh" in lowered:
+                base_date = (now + timedelta(days=1)).date()
+            h, mn = clock
+            start = datetime(base_date.year, base_date.month, base_date.day, h, mn, 0, 0)
+
+        if start and "amanh" in lowered and start.date() == now.date():
+            start = start + timedelta(days=1)
+
+        if start and clock:
+            h, mn = clock
+            start = start.replace(hour=h, minute=mn, second=0, microsecond=0)
+
+        if (
+            start
+            and start < now
+            and "ontem" not in lowered
+            and "yesterday" not in lowered
+            and "hoje" not in lowered
+            and "today" not in lowered
+        ):
+            start = start + timedelta(days=1)
+
+        start = self._apply_day_period_adjustment(normalized, start)
+
+        updates: dict[str, Any] = {}
+        if start is not None:
+            if start.replace(second=0, microsecond=0) != anchor_start.replace(second=0, microsecond=0):
+                updates["start"] = start
+
+        if explicit_title and not meeting_subject_is_invalid(explicit_title):
+            prev = (payload.get("title") or "").strip()
+            if explicit_title.strip() != prev:
+                updates["title"] = explicit_title.strip()[:200]
+
+        if dur_explicit and dur_m != int(payload.get("duration_minutes") or 30):
+            updates["duration_minutes"] = dur_m
+
+        return updates if updates else None
 
     def try_resume_create_after_unknown(self, text: str, language: str, draft: MeetingDraft | None) -> IntentResult | None:
         if draft is None:

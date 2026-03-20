@@ -3,7 +3,7 @@ import re
 
 class LanguageService:
     EN_HINTS = ("schedule", "meeting", "cancel", "reschedule", "tomorrow", "today", "with")
-    PT_HINTS = ("agende", "reuniao", "marque", "reagende", "amanha", "hoje", "compromisso")
+    PT_HINTS = ("agende", "reuniao", "marque", "reagende", "amanha", "hoje", "compromisso", "manha", "horario", "horário")
     ES_HINTS = ("agenda", "reunion", "cancela", "reagenda", "manana", "mañana", "compromiso", "viernes", "tengo")
 
     def detect(self, text: str, fallback: str = "pt") -> str:
@@ -16,8 +16,10 @@ class LanguageService:
             pt_score += 2
         if re.search(r"[ñ¿¡]", lowered):
             es_score += 2
+        # «é», «as 10» etc. são comuns em PT; não empurrar para ES só por vogal aguda.
         if re.search(r"[áéíóú]", lowered) and not re.search(r"[ãõç]", lowered):
-            es_score += 1
+            if not re.search(r"\b(as|às)\s+\d", lowered):
+                es_score += 1
 
         best = max(en_score, pt_score, es_score)
         if best == 0:
