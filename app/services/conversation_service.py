@@ -9,6 +9,7 @@ from dateutil import parser as date_parser
 
 from app.adapters.mcp_tools import CalendarMcpTools
 from app.adapters.ollama_client import OllamaClient
+from app.adapters.openai_compatible_llm import OpenAICompatibleLlmClient
 from app.core.config import settings
 from app.core.metrics import metrics
 from app.models.domain import ConversationState, MeetingDraft
@@ -42,6 +43,7 @@ class ConversationService:
         proactive: ProactiveSuggestionService,
         turns: VoiceTurnCoordinator,
         ollama: OllamaClient | None = None,
+        openai_compat_llm: OpenAICompatibleLlmClient | None = None,
     ) -> None:
         self.memory = memory
         self.language = language
@@ -55,6 +57,7 @@ class ConversationService:
         self.proactive = proactive
         self.turns = turns
         self.ollama = ollama
+        self.openai_compat_llm = openai_compat_llm
 
     def get_proactive_suggestions(self, session_id: str, user_id: str, trigger: str = "manual") -> list[dict]:
         state = self.memory.get_session(session_id, user_id)
@@ -347,9 +350,16 @@ class ConversationService:
         return self._build_response(state, intent, text, False, False)
 
     def _smart_unknown_reply(self, language: str, raw_message: str) -> str:
+        prompt = raw_message or "Usuario nao especificou claramente o pedido."
+        if self.openai_compat_llm is not None and OpenAICompatibleLlmClient.is_configured():
+            try:
+                result = self.openai_compat_llm.chat_reply_sync(prompt, language=language)
+                if result:
+                    return result
+            except Exception:  # noqa: BLE001
+                logger.debug("Fallback cloud LLM falhou; tentando Ollama ou resposta fixa.", exc_info=True)
         if settings.ollama_enabled and self.ollama is not None:
             try:
-                prompt = raw_message or "Usuario nao especificou claramente o pedido."
                 result = self.ollama.chat_reply_sync(prompt, language=language)
                 if result:
                     return result

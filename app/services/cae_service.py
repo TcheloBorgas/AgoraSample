@@ -6,6 +6,7 @@ from datetime import datetime
 from typing import Any
 
 from app.adapters.agora_cae_client import AgoraConversationalAIClient
+from app.adapters.openai_compatible_llm import resolve_openai_compat_llm
 from app.core.config import settings
 
 
@@ -121,22 +122,31 @@ class CAEService:
         return {"name": name, "properties": properties}
 
     def _build_llm_config(self, session_id: str) -> dict[str, Any]:
-        if settings.agora_cae_external_llm_url:
+        sys_content = (
+            "You are a bilingual scheduling assistant. Confirm critical actions before execution. "
+            "Prefer concise, natural answers in user language."
+        )
+        if settings.agora_cae_external_llm_url.strip():
+            model = (settings.agora_cae_external_llm_model or "").strip() or "gpt-4o-mini"
             return {
                 "vendor": "custom",
                 "style": "openai",
-                "url": settings.agora_cae_external_llm_url,
-                "api_key": settings.agora_cae_external_llm_api_key,
-                "system_messages": [
-                    {
-                        "role": "system",
-                        "content": (
-                            "You are a bilingual scheduling assistant. Confirm critical actions before execution. "
-                            "Prefer concise, natural answers in user language."
-                        ),
-                    }
-                ],
-                "params": {"model": "local-scheduler-agent"},
+                "url": settings.agora_cae_external_llm_url.strip().rstrip("/"),
+                "api_key": settings.agora_cae_external_llm_api_key.strip(),
+                "system_messages": [{"role": "system", "content": sys_content}],
+                "params": {"model": model},
+            }
+
+        resolved = resolve_openai_compat_llm()
+        if resolved:
+            base_url, api_key, model = resolved
+            return {
+                "vendor": "custom",
+                "style": "openai",
+                "url": base_url,
+                "api_key": api_key,
+                "system_messages": [{"role": "system", "content": sys_content}],
+                "params": {"model": model},
             }
 
         if not settings.agora_cae_public_base_url:
@@ -167,8 +177,13 @@ class CAEService:
         vendor = settings.agora_cae_tts_vendor.lower()
 
         if vendor == "openai":
-            if not settings.agora_cae_tts_openai_key:
-                raise RuntimeError("AGORA_CAE_TTS_OPENAI_KEY nao configurado.")
+            if not settings.agora_cae_tts_openai_key.strip():
+                raise RuntimeError(
+                    "AGORA_CAE_TTS_OPENAI_KEY nao configurado (voz do agente CAE). "
+                    "Crie uma chave em https://platform.openai.com/api-keys ou mude AGORA_CAE_TTS_VENDOR "
+                    "para microsoft e configure AGORA_CAE_TTS_AZURE_KEY / AGORA_CAE_TTS_AZURE_REGION. "
+                    "Nota: GEMINI_API_KEY cobre o LLM, mas nao substitui TTS OpenAI da Agora."
+                )
             return {
                 "vendor": "openai",
                 "params": {

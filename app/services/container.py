@@ -4,6 +4,7 @@ from app.adapters.agora_cae_client import AgoraConversationalAIClient
 from app.adapters.agora_client import AgoraClient
 from app.adapters.google_calendar_client import GoogleCalendarClient
 from app.adapters.ollama_client import OllamaClient
+from app.adapters.openai_compatible_llm import OpenAICompatibleLlmClient
 from app.adapters.mcp_tools import CalendarMcpTools
 from app.repositories.action_log_repository import ActionLogRepository
 from app.repositories.conversation_repository import ConversationRepository
@@ -133,6 +134,7 @@ def get_conversation_service() -> ConversationService:
         actions=get_action_log_repository(),
         preferences=get_preference_repository(),
         ollama=get_ollama_client(),
+        openai_compat_llm=get_openai_compatible_llm_client(),
         mcp_tools=get_mcp_tools(),
         trace_service=get_trace_service(),
         proactive=get_proactive_suggestion_service(),
@@ -158,6 +160,11 @@ def get_cae_service() -> CAEService:
 @lru_cache
 def get_ollama_client() -> OllamaClient:
     return OllamaClient()
+
+
+@lru_cache
+def get_openai_compatible_llm_client() -> OpenAICompatibleLlmClient:
+    return OpenAICompatibleLlmClient()
 
 
 @lru_cache

@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     agora_cae_public_base_url: str = Field(default="", validation_alias="AGORA_CAE_PUBLIC_BASE_URL")
     agora_cae_external_llm_url: str = Field(default="", validation_alias="AGORA_CAE_EXTERNAL_LLM_URL")
     agora_cae_external_llm_api_key: str = Field(default="", validation_alias="AGORA_CAE_EXTERNAL_LLM_API_KEY")
+    agora_cae_external_llm_model: str = Field(default="", validation_alias="AGORA_CAE_EXTERNAL_LLM_MODEL")
     agora_cae_mcp_endpoint: str = Field(default="", validation_alias="AGORA_CAE_MCP_ENDPOINT")
     agora_cae_tts_vendor: str = Field(default="microsoft", validation_alias="AGORA_CAE_TTS_VENDOR")
     agora_cae_tts_azure_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_AZURE_KEY")
@@ -43,6 +44,16 @@ class Settings(BaseSettings):
     ollama_enabled: bool = Field(default=True, validation_alias="OLLAMA_ENABLED")
     ollama_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="OLLAMA_BASE_URL")
     ollama_model: str = Field(default="mistral", validation_alias="OLLAMA_MODEL")
+
+    # API estilo OpenAI (Groq tier grátis, OpenRouter, Gemini compat, etc.) — usada no fallback de intenção unknown
+    llm_openai_compat_base_url: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_BASE_URL")
+    llm_openai_compat_api_key: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_API_KEY")
+    llm_openai_compat_model: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_MODEL")
+    llm_openai_compat_timeout_seconds: int = Field(default=60, validation_alias="LLM_OPENAI_COMPAT_TIMEOUT")
+
+    # Google AI Studio (grátis): uma chave ativa LLM OpenAI-compat sem Groq/Ollama
+    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    gemini_model: str = Field(default="gemini-2.0-flash", validation_alias="GEMINI_MODEL")
 
     short_term_memory_limit: int = 20
 

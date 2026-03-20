@@ -15,6 +15,15 @@ let uiLocale = "pt-BR";
 let currentLanguage = "pt-BR";
 let voiceUiState = "idle";
 
+/** Base do FastAPI: vazio = mesmo host (quando a UI é servida pelo uvicorn). Para file:// ou outro host, defina antes de carregar este script: window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' */
+function apiUrl(path) {
+  const base = String(typeof window !== "undefined" && window.__SCHEDULER_API_BASE__ ? window.__SCHEDULER_API_BASE__ : "")
+    .trim()
+    .replace(/\/$/, "");
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${base}${p}`;
+}
+
 const logEl = document.getElementById("log");
 const sessionIdEl = document.getElementById("sessionId");
 const userIdEl = document.getElementById("userId");
@@ -422,7 +431,7 @@ async function setAgentSpeakingOnServer(speaking) {
   const sessionId = sessionIdEl.value.trim();
   if (!sessionId) return;
   try {
-    await fetch(`/api/conversation/${sessionId}/voice/agent-speaking/${speaking}`, { method: "POST" });
+    await fetch(apiUrl(`/api/conversation/${sessionId}/voice/agent-speaking/${speaking}`), { method: "POST" });
   } catch (_err) {}
 }
 
@@ -430,18 +439,18 @@ async function signalInterrupt() {
   const sessionId = sessionIdEl.value.trim();
   if (!sessionId) return;
   try {
-    await fetch(`/api/conversation/${sessionId}/voice/interrupt`, { method: "POST" });
+    await fetch(apiUrl(`/api/conversation/${sessionId}/voice/interrupt`), { method: "POST" });
   } catch (_err) {}
 }
 
 async function getAgoraSession(sessionId) {
-  const response = await fetch(`/api/system/agora/session/${sessionId}`);
+  const response = await fetch(apiUrl(`/api/system/agora/session/${sessionId}`));
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
 
 async function startCaeAgent(sessionId, channel, token, remoteUid) {
-  const response = await fetch("/api/cae/agent/start", {
+  const response = await fetch(apiUrl("/api/cae/agent/start"), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -518,9 +527,11 @@ function speak(text, backendLanguage) {
     setAgentSpeakingOnServer(false);
     if (!isRecording) setVoiceUiState("idle");
   };
-  utterance.onerror = () => {
+  utterance.onerror = (ev) => {
     setAgentSpeakingOnServer(false);
-    setVoiceUiState("error");
+    const detail = ev?.error || "speech-synthesis";
+    log(`TTS (${detail}): leia a resposta no chat; o agente já respondeu.`);
+    if (!isRecording) setVoiceUiState("idle");
   };
   window.speechSynthesis.cancel();
   window.speechSynthesis.speak(utterance);
@@ -531,12 +542,15 @@ async function sendMessage(message) {
   const userId = userIdEl.value.trim();
   setVoiceUiState("thinking");
 
-  const response = await fetch(`/api/conversation/${sessionId}/message/stream`, {
+  const response = await fetch(apiUrl(`/api/conversation/${sessionId}/message/stream`), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, user_id: userId, stream: true }),
   });
-  if (!response.ok) throw new Error(await response.text());
+  if (!response.ok) {
+    const errText = await response.text();
+    throw new Error(errText || `HTTP ${response.status}`);
+  }
 
   const streamBubble = createStreamingAssistantMessage();
   const reader = response.body?.getReader();
@@ -545,23 +559,45 @@ async function sendMessage(message) {
   const decoder = new TextDecoder();
   let buffer = "";
   let finalPayload = null;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+
+  const consumeSseBuffer = () => {
     const events = buffer.split("\n\n");
     buffer = events.pop() || "";
     for (const eventChunk of events) {
       const line = eventChunk.split("\n").find((part) => part.startsWith("data: "));
       if (!line) continue;
-      const payload = JSON.parse(line.replace("data: ", ""));
+      let payload;
+      try {
+        payload = JSON.parse(line.slice(6).trimStart());
+      } catch (_e) {
+        continue;
+      }
       if (payload.type === "chunk") {
         streamBubble.append(payload.text);
       } else if (payload.type === "final") {
         finalPayload = payload.response;
       }
     }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    consumeSseBuffer();
   }
+  buffer += decoder.decode();
+  consumeSseBuffer();
+  if (!finalPayload && buffer.trim()) {
+    const line = buffer.split("\n").find((part) => part.startsWith("data: "));
+    if (line) {
+      try {
+        const payload = JSON.parse(line.replace(/^data:\s*/, ""));
+        if (payload.type === "final") finalPayload = payload.response;
+      } catch (_e) {}
+    }
+  }
+
   if (!finalPayload) throw new Error("Final payload missing.");
 
   currentLanguage = finalPayload.language === "en" ? "en-US" : finalPayload.language === "es" ? "es-ES" : "pt-BR";
@@ -574,6 +610,7 @@ async function sendMessage(message) {
   });
   renderProactiveSuggestions(finalPayload.proactive_suggestions || []);
   renderAgentTrace(finalPayload.trace || null);
+  if (!isRecording) setVoiceUiState("idle");
   speak(finalPayload.response_text, finalPayload.language);
 }
 
@@ -617,7 +654,7 @@ async function transcribeRecordedAudio(wavBlob) {
   const formData = new FormData();
   formData.append("file", wavBlob, "record.wav");
   formData.append("language", getSpeechLocaleFromUi());
-  const response = await fetch("/api/system/stt/transcribe", { method: "POST", body: formData });
+    const response = await fetch(apiUrl("/api/system/stt/transcribe"), { method: "POST", body: formData });
   if (!response.ok) throw new Error(await response.text());
   return response.json();
 }
@@ -683,7 +720,7 @@ async function pollVoiceState() {
   const sessionId = sessionIdEl.value.trim();
   if (!sessionId) return;
   try {
-    const response = await fetch(`/api/conversation/${sessionId}/voice/state`);
+    const response = await fetch(apiUrl(`/api/conversation/${sessionId}/voice/state`));
     if (!response.ok) return;
     const state = await response.json();
     if (state.user_interrupting) {
