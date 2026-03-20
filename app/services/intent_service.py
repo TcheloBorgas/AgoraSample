@@ -65,6 +65,46 @@ class IntentResult:
 
 
 class IntentService:
+    @staticmethod
+    def _has_strong_temporal_signal(text: str) -> bool:
+        lowered = text.lower()
+        if re.search(r"\b\d{1,2}\s*:\s*\d{2}\b", lowered):
+            return True
+        if re.search(r"\b\d{1,2}(:\d{2})?\s*(am|pm|a\.m\.|p\.m\.)\b", lowered):
+            return True
+        if re.search(r"\b\d{1,2}\s*h\b", lowered):
+            return True
+        if re.search(r"\b\d{1,2}[/-]\d{1,2}(?:[/-]\d{2,4})?\b", lowered):
+            return True
+        strong_tokens = (
+            "amanh",
+            "hoje",
+            "tomorrow",
+            "today",
+            "depois de amanha",
+            "depois de amanhã",
+            "next week",
+            "proxima semana",
+            "próxima semana",
+            "segunda",
+            "terca",
+            "terça",
+            "quarta",
+            "quinta",
+            "sexta",
+            "sabado",
+            "sábado",
+            "domingo",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
+        )
+        return any(token in lowered for token in strong_tokens)
+
     def normalize_user_text(self, text: str) -> str:
         t = (text or "").replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
         t = re.sub(r"https?://[^\s]+", " ", t, flags=re.IGNORECASE)
@@ -156,6 +196,8 @@ class IntentService:
         start = date_hits[0][1] if date_hits else None
         clock = self._extract_explicit_clock_time(text)
         lowered = text.lower()
+        if not self._has_strong_temporal_signal(text):
+            start = None
 
         if start is None and clock:
             base_date = now.date()
@@ -322,11 +364,14 @@ class IntentService:
             return None
         lowered = text.lower()
         hour = start.hour
-        if any(token in lowered for token in ["tarde", "da tarde", "à tarde", "pm"]) and hour < 12:
+        has_afternoon = bool(re.search(r"\btarde\b|da tarde|à tarde|\bpm\b", lowered))
+        has_night = bool(re.search(r"\bnoite\b|da noite", lowered))
+        has_morning = bool(re.search(r"\bmanh[ãa]\b|de manhã|de manha", lowered))
+        if has_afternoon and hour < 12:
             return start.replace(hour=hour + 12)
-        if any(token in lowered for token in ["noite", "da noite"]) and hour < 12:
+        if has_night and hour < 12:
             return start.replace(hour=min(hour + 12, 23))
-        if any(token in lowered for token in ["manhã", "manha", "de manhã"]) and hour == 12:
+        if has_morning and hour == 12:
             return start.replace(hour=0)
         return start
 
@@ -630,6 +675,7 @@ class IntentService:
             return None
         entities = self._extract_entities(normalized, language, "create_meeting")
         merged = self.merge_meeting_draft(draft, entities)
+        merged = self.fill_first_missing_create_slot(normalized, language, merged)
         missing = self._required_fields("create_meeting", merged)
         return IntentResult(intent="create_meeting", entities=merged, missing_fields=missing)
 
