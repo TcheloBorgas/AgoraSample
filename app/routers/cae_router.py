@@ -102,7 +102,12 @@ async def cae_llm_callback(
     if not user_text:
         user_text = "Continue em portugues com uma resposta curta."
 
-    result = conversation.handle_message(session_id=session_id, user_id=user_id, message=user_text)
+    result = conversation.handle_message(
+        session_id=session_id,
+        user_id=user_id,
+        message=user_text,
+        use_cloud_fallback_for_unknown=False,
+    )
     return {
         "id": f"chatcmpl-{int(time.time())}",
         "object": "chat.completion",

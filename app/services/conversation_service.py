@@ -64,7 +64,13 @@ class ConversationService:
         suggestions = self.proactive.suggest(session_id=session_id, user_id=user_id, language=state.language, trigger=trigger)
         return [item.model_dump(mode="json") for item in suggestions]
 
-    def handle_message(self, session_id: str, user_id: str, message: str) -> AssistantResponse:
+    def handle_message(
+        self,
+        session_id: str,
+        user_id: str,
+        message: str,
+        use_cloud_fallback_for_unknown: bool = True,
+    ) -> AssistantResponse:
         start_ts = perf_counter()
         state = self.memory.get_session(session_id, user_id)
         trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=state.language)
@@ -280,7 +286,11 @@ class ConversationService:
         trace: TraceContext,
     ) -> AssistantResponse:
         if intent == "unknown":
-            text = self._smart_unknown_reply(state.language, raw_message)
+            text = self._smart_unknown_reply(
+                state.language,
+                raw_message,
+                use_cloud_fallback_for_unknown=use_cloud_fallback_for_unknown,
+            )
             self.trace_service.step(trace, "fallback_unknown", "Unknown intent handled by fallback/LLM.", status="warning")
             return self._build_response(state, intent, text, False, False)
 
@@ -426,16 +436,21 @@ class ConversationService:
         text = self.fallback.unknown_intent(state.language)
         return self._build_response(state, intent, text, False, False)
 
-    def _smart_unknown_reply(self, language: str, raw_message: str) -> str:
+    def _smart_unknown_reply(
+        self,
+        language: str,
+        raw_message: str,
+        use_cloud_fallback_for_unknown: bool = True,
+    ) -> str:
         prompt = raw_message or "Usuario nao especificou claramente o pedido."
-        if self.openai_compat_llm is not None and OpenAICompatibleLlmClient.is_configured():
+        if use_cloud_fallback_for_unknown and self.openai_compat_llm is not None and OpenAICompatibleLlmClient.is_configured():
             try:
                 result = self.openai_compat_llm.chat_reply_sync(prompt, language=language)
                 if result:
                     return result
             except Exception:  # noqa: BLE001
                 logger.debug("Fallback cloud LLM falhou; tentando Ollama ou resposta fixa.", exc_info=True)
-        if settings.ollama_enabled and self.ollama is not None:
+        if use_cloud_fallback_for_unknown and settings.ollama_enabled and self.ollama is not None:
             try:
                 result = self.ollama.chat_reply_sync(prompt, language=language)
                 if result:
