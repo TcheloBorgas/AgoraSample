@@ -52,6 +52,7 @@ async def start_cae_agent(
             "agent_id": started.agent_id,
             "status": started.status,
             "session_id": started.session_id,
+            "agent_rtc_uid": int(settings.agora_cae_agent_uid),
             "cae_tts": tts_public,
         }
     except Exception as exc:  # noqa: BLE001

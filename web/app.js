@@ -4,6 +4,10 @@ let isConnectingAgora = false;
 let isRtcConnected = false;
 let caeActive = false;
 let localRtcUid = null;
+/** UID RTC do agente CAE (vem de /api/cae/agent/start) — para diagnóstico de áudio remoto */
+let expectedCaeAgentUid = null;
+let caeAgentAudioReceived = false;
+let caeRemoteAudioWatchdogTimer = null;
 
 /** Tracks de áudio remoto (agente CAE) para retomar play após bloqueio de autoplay */
 let remoteAudioTracks = [];
@@ -125,9 +129,17 @@ const UI_TEXTS = {
     logCaeTtsPlaying:
       "TTS CAE (Agora): áudio remoto do agente — voz sintetizada pelo Conversational AI no canal RTC.",
     logCaeActive: "CAE ativo. Fale normalmente sem usar captura local.",
+    logCaeSpeakHint:
+      "Voz CAE no RTC: fale no microfone (áudio já publicado). O chat/STT só atualiza texto no FastAPI — não manda TTS pelo Agora. Aguarde user-published de áudio após o agente responder.",
     logCaeLocalRecord:
       "CAE ativo: a transcrição no chat usa captura local (STT). O agente CAE também pode ouvir pelo canal RTC.",
     logCaeFallback: "CAE indisponível. Mantendo fluxo local com voz + chat.",
+    logCaeRemoteAudioOk:
+      "RTC: primeiro áudio publicado pelo agente CAE (uid=%s) — o browser deve reproduzir (ou pedir «Ativar áudio»).",
+    logCaeNoRemoteAudioDiagnostic:
+      "RTC diagnóstico: após %TIME% s ainda não houve user-published de áudio do agente (uid esperado %UID%). " +
+      "Isto indica que o CAE não está a enviar TTS no canal (ou ainda não processou a sua fala no RTC). " +
+      "Fale no microfone; confira no Render logs do CAE, chaves TTS e consola Agora.",
     logAutoplayBlocked:
       "Autoplay bloqueado: o áudio do agente CAE chegou ao browser, mas o Chrome/Safari exigem um clique para tocar. Use «Ativar áudio do agente».",
     logAudioPlayFailed: "Falha ao iniciar reprodução do áudio remoto",
@@ -210,9 +222,17 @@ const UI_TEXTS = {
     logCaeTtsPlaying:
       "CAE TTS (Agora): remote agent audio — synthesized by Conversational AI on the RTC channel.",
     logCaeActive: "CAE active. Speak normally without local capture.",
+    logCaeSpeakHint:
+      "CAE voice on RTC: speak into the mic (audio is published). Chat/STT only updates the FastAPI text — it does not send Agora TTS. Wait for remote audio after the agent replies.",
     logCaeLocalRecord:
       "CAE active: chat transcription uses local capture (STT). The CAE agent may also listen via RTC.",
     logCaeFallback: "CAE unavailable. Keeping local voice + chat flow.",
+    logCaeRemoteAudioOk:
+      "RTC: first remote audio published by CAE agent (uid=%s) — browser should play (or use «Enable agent audio»).",
+    logCaeNoRemoteAudioDiagnostic:
+      "RTC diagnostic: after %TIME% s still no user-published audio from agent (expected uid %UID%). " +
+      "The CAE is not sending TTS on the channel yet (or has not processed your RTC speech). " +
+      "Speak into the mic; check Render CAE logs, TTS keys, and Agora console.",
     logAutoplayBlocked:
       "Autoplay blocked: CAE agent audio arrived but the browser requires a click to play. Use «Enable agent audio».",
     logAudioPlayFailed: "Failed to start remote audio playback",
@@ -295,9 +315,16 @@ const UI_TEXTS = {
     logCaeTtsPlaying:
       "TTS CAE (Agora): audio remoto del agente — voz sintetizada por Conversational AI en el canal RTC.",
     logCaeActive: "CAE activo. Habla normalmente sin captura local.",
+    logCaeSpeakHint:
+      "Voz CAE en RTC: habla al micrófono. El chat/STT solo actualiza texto en el servidor — no envía TTS por Agora. Espera user-published cuando el agente hable.",
     logCaeLocalRecord:
       "CAE activo: la transcripción en el chat usa captura local (STT). El agente CAE también puede oír por RTC.",
     logCaeFallback: "CAE no disponible. Manteniendo flujo local de voz + chat.",
+    logCaeRemoteAudioOk:
+      "RTC: primer audio publicado por el agente CAE (uid=%s).",
+    logCaeNoRemoteAudioDiagnostic:
+      "RTC diagnóstico: tras %TIME% s no hubo user-published de audio del agente (uid esperado %UID%). " +
+      "El CAE aún no envía TTS o no procesó tu voz en RTC. Habla al micrófono; revisa logs TTS y Agora.",
     logAutoplayBlocked:
       "Autoplay bloqueado: el audio del agente CAE llegó, pero el navegador exige un clic. Usa «Activar audio del agente».",
     logAudioPlayFailed: "Error al reproducir audio remoto",
@@ -444,6 +471,47 @@ function setupAgoraAutoplayHook() {
   } catch (_e) {
     /* SDK antigo sem onAutoplayFailed */
   }
+}
+
+/** Segundos sem `user-published` de áudio do agente antes de log de diagnóstico (consola + #log). */
+const CAE_REMOTE_AUDIO_WATCHDOG_SEC = 45;
+
+function clearCaeRemoteAudioWatchdog() {
+  if (caeRemoteAudioWatchdogTimer) {
+    clearTimeout(caeRemoteAudioWatchdogTimer);
+    caeRemoteAudioWatchdogTimer = null;
+  }
+}
+
+function resetCaeRemoteAudioState() {
+  expectedCaeAgentUid = null;
+  caeAgentAudioReceived = false;
+  clearCaeRemoteAudioWatchdog();
+}
+
+function scheduleCaeRemoteAudioWatchdog() {
+  clearCaeRemoteAudioWatchdog();
+  const sec = CAE_REMOTE_AUDIO_WATCHDOG_SEC;
+  caeRemoteAudioWatchdogTimer = setTimeout(() => {
+    caeRemoteAudioWatchdogTimer = null;
+    if (caeAgentAudioReceived || !caeActive) return;
+    const uidStr = expectedCaeAgentUid != null ? String(expectedCaeAgentUid) : "?";
+    log(
+      t("logCaeNoRemoteAudioDiagnostic").replace("%TIME%", String(sec)).replace("%UID%", uidStr),
+    );
+  }, sec * 1000);
+}
+
+/** Chamado quando há `user-published` de áudio remoto; confirma se é o UID do agente CAE. */
+function markCaeAgentAudioPublished(uid) {
+  if (expectedCaeAgentUid != null && String(uid) !== String(expectedCaeAgentUid)) {
+    log(`RTC: áudio publicado por uid=${uid} (agente esperado uid=${expectedCaeAgentUid}).`);
+    return;
+  }
+  if (caeAgentAudioReceived) return;
+  caeAgentAudioReceived = true;
+  clearCaeRemoteAudioWatchdog();
+  log(t("logCaeRemoteAudioOk").replace("%s", String(uid)));
 }
 
 async function playRemoteAudioTrack(track, uid) {
@@ -692,6 +760,7 @@ async function connectAgora() {
 
   setupAgoraAutoplayHook();
   remoteAudioTracks = [];
+  resetCaeRemoteAudioState();
 
   isConnectingAgora = true;
   connectAgoraBtnEl.disabled = true;
@@ -700,12 +769,34 @@ async function connectAgora() {
     log(t("logAgoraStepSession"));
     const data = await getAgoraSession(sessionId);
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    let lastVolumeLogTs = 0;
+    try {
+      if (typeof agoraClient.enableAudioVolumeIndicator === "function") {
+        agoraClient.enableAudioVolumeIndicator();
+        agoraClient.on("volume-indicator", (volumes) => {
+          const now = Date.now();
+          for (const v of volumes) {
+            if (v.level > 5 && now - lastVolumeLogTs > 2000) {
+              lastVolumeLogTs = now;
+              log(`RTC volume-indicator uid=${v.uid} level=${v.level}`);
+            }
+          }
+        });
+      }
+    } catch (_e) {
+      /* ignore */
+    }
+    agoraClient.on("user-info-update", (uid, msg) => {
+      log(`RTC user-info-update uid=${uid} msg=${msg}`);
+    });
     agoraClient.on("user-joined", (user) => {
       log(t("logRemoteUserJoined").replace("%s", String(user.uid)));
     });
     agoraClient.on("user-published", async (user, mediaType) => {
+      log(`RTC user-published uid=${user.uid} mediaType=${mediaType}`);
       await agoraClient.subscribe(user, mediaType);
       if (mediaType === "audio" && user.audioTrack) {
+        markCaeAgentAudioPublished(user.uid);
         remoteAudioTracks.push(user.audioTrack);
         await playRemoteAudioTrack(user.audioTrack, user.uid);
       }
@@ -731,14 +822,23 @@ async function connectAgora() {
       if (cae?.cae_tts) {
         log(`CAE TTS (backend): ${JSON.stringify(cae.cae_tts)}`);
       }
+      if (cae?.agent_rtc_uid != null && cae?.agent_rtc_uid !== undefined) {
+        expectedCaeAgentUid = cae.agent_rtc_uid;
+        log(`CAE agent_rtc_uid (backend): ${expectedCaeAgentUid}`);
+      }
+      caeAgentAudioReceived = false;
       if (caeActive) {
         log(t("logCaeActive"));
+        log(t("logCaeSpeakHint"));
+        scheduleCaeRemoteAudioWatchdog();
       } else {
         log(t("logCaeFallback"));
+        clearCaeRemoteAudioWatchdog();
       }
       refreshVoiceToggleButton();
     } catch (caeErr) {
       caeActive = false;
+      resetCaeRemoteAudioState();
       log(`${t("logCaeFallback")} — ${caeErr?.message || caeErr || ""}`);
       refreshVoiceToggleButton();
     }
