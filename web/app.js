@@ -115,6 +115,8 @@ const UI_TEXTS = {
     logConnected: "Agora conectada no canal",
     logRemoteAudio: "Áudio remoto ativo",
     logCaeActive: "CAE ativo. Fale normalmente sem usar captura local.",
+    logCaeLocalRecord:
+      "CAE ativo: a transcrição no chat usa captura local (STT). O agente CAE também pode ouvir pelo canal RTC.",
     logCaeFallback: "CAE indisponível. Mantendo fluxo local com voz + chat.",
     logMicError: "Falha de microfone",
     logVoiceError: "Falha na captura de voz",
@@ -188,6 +190,8 @@ const UI_TEXTS = {
     logConnected: "Agora connected on channel",
     logRemoteAudio: "Remote audio active",
     logCaeActive: "CAE active. Speak normally without local capture.",
+    logCaeLocalRecord:
+      "CAE active: chat transcription uses local capture (STT). The CAE agent may also listen via RTC.",
     logCaeFallback: "CAE unavailable. Keeping local voice + chat flow.",
     logMicError: "Microphone failure",
     logVoiceError: "Voice capture failure",
@@ -261,6 +265,8 @@ const UI_TEXTS = {
     logConnected: "Agora conectada en el canal",
     logRemoteAudio: "Audio remoto activo",
     logCaeActive: "CAE activo. Habla normalmente sin captura local.",
+    logCaeLocalRecord:
+      "CAE activo: la transcripción en el chat usa captura local (STT). El agente CAE también puede oír por RTC.",
     logCaeFallback: "CAE no disponible. Manteniendo flujo local de voz + chat.",
     logMicError: "Fallo de micrófono",
     logVoiceError: "Fallo en captura de voz",
@@ -281,11 +287,15 @@ function t(key) {
 }
 
 function refreshVoiceToggleButton() {
+  if (isRecording) {
+    voiceToggleBtnEl.textContent = t("voiceToggleRecording");
+    return;
+  }
   if (caeActive) {
     voiceToggleBtnEl.textContent = t("voiceToggleCaeLive");
     return;
   }
-  voiceToggleBtnEl.textContent = isRecording ? t("voiceToggleRecording") : t("voiceToggleIdle");
+  voiceToggleBtnEl.textContent = t("voiceToggleIdle");
 }
 
 function looksLikeHtmlPayload(text) {
@@ -869,12 +879,10 @@ connectAgoraBtnEl.addEventListener("click", async () => {
 
 voiceToggleBtnEl.addEventListener("click", async () => {
   try {
-    if (caeActive) {
-      log(t("logCaeActive"));
-      refreshVoiceToggleButton();
-      return;
-    }
     if (!isRecording) {
+      if (caeActive) {
+        log(t("logCaeLocalRecord"));
+      }
       if (window.speechSynthesis.speaking) {
         await interruptAgent();
       }
