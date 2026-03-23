@@ -147,18 +147,86 @@ class IntentService:
         if any(
             k in lowered
             for k in [
-                "criar",
-                "crie",
-                "create",
-                "book",
-                "agende",
-                "awgende",
-                "marque",
-                "marca",
-                "agenda una",
-                "crea una",
-                "programa",
-            ]
+            "criar",
+            "crie",
+            "cria",
+            "criado",
+            "criando",
+
+            "create",
+            "creates",
+            "creating",
+            "created",
+
+            "book",
+            "booking",
+            "booked",
+
+            "schedule",
+            "schedules",
+            "scheduled",
+            "scheduling",
+
+            "agendar",
+            "agende",
+            "agenda",
+            "agendado",
+            "agendando",
+            "awgende",
+            "agnda",
+            "agendar um",
+            "agendar uma",
+
+            "marcar",
+            "marque",
+            "marca",
+            "marcado",
+            "marcando",
+            "marcar um",
+            "marcar uma",
+
+            "programar",
+            "programe",
+            "programa",
+            "programado",
+            "programando",
+
+            "reservar",
+            "reserve",
+            "reserva",
+            "reservado",
+            "reservando",
+
+            "appointment",
+            "set appointment",
+            "make appointment",
+
+            "crear",
+            "crea",
+            "cree",
+            "creando",
+            "creado",
+
+            "agenda una",
+            "agenda un",
+            "agendar una",
+            "agendar un",
+
+            "programa una",
+            "programa un",
+            "programar una",
+            "programar un",
+
+            "reservar una",
+            "reservar un",
+            "reserva una",
+            "reserva un",
+
+            "cita",
+            "agendar cita",
+            "reservar cita",
+            "programar cita"
+        ]
         ):
             return "create_meeting"
         if has_time_hint and has_preference_reply:
