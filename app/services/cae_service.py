@@ -162,7 +162,7 @@ class CAEService:
         Resumo seguro (sem chaves) do TTS do CAE para logs e respostas de API.
         A sintese de voz do agente e feita pela Agora CAE conforme este vendor.
         """
-        vendor = settings.agora_cae_tts_vendor.lower()
+        vendor = settings.agora_cae_tts_vendor.lower().strip()
         if vendor == "openai":
             return {
                 "pipeline": "cae_tts",
@@ -266,7 +266,7 @@ class CAEService:
         )
 
     def _build_tts_config(self, language: str) -> dict[str, Any]:
-        vendor = settings.agora_cae_tts_vendor.lower()
+        vendor = settings.agora_cae_tts_vendor.lower().strip()
 
         if vendor == "openai":
             if not settings.agora_cae_tts_openai_key.strip():
@@ -293,13 +293,14 @@ class CAEService:
             }
 
         if vendor == "elevenlabs":
-            if not settings.agora_cae_tts_elevenlabs_key:
+            el_key = (settings.agora_cae_tts_elevenlabs_key or "").strip()
+            if not el_key:
                 raise RuntimeError("AGORA_CAE_TTS_ELEVENLABS_KEY nao configurado.")
             return {
                 "vendor": "elevenlabs",
                 "params": {
                     "base_url": "wss://api.elevenlabs.io/v1",
-                    "key": settings.agora_cae_tts_elevenlabs_key,
+                    "key": el_key,
                     "model_id": settings.agora_cae_tts_elevenlabs_model_id,
                     "voice_id": settings.agora_cae_tts_elevenlabs_voice_id,
                     "sample_rate": 24000,

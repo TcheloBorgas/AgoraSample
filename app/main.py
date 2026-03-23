@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 from fastapi import FastAPI
@@ -11,6 +12,17 @@ from app.routers.conversation_router import router as conversation_router
 from app.routers.system_router import router as system_router
 
 configure_logging()
+
+_log = logging.getLogger(__name__)
+_log.info(
+    "CAE TTS resolvido: AGORA_CAE_TTS_VENDOR=%r | elevenlabs_key=%s openai_tts_key=%s azure_tts=%s",
+    settings.agora_cae_tts_vendor,
+    "sim" if (settings.agora_cae_tts_elevenlabs_key or "").strip() else "nao",
+    "sim" if (settings.agora_cae_tts_openai_key or "").strip() else "nao",
+    "sim"
+    if (settings.agora_cae_tts_azure_key or "").strip() and (settings.agora_cae_tts_azure_region or "").strip()
+    else "nao",
+)
 
 app = FastAPI(title=settings.app_name)
 

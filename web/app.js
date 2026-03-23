@@ -11,7 +11,43 @@ let caeRemoteAudioWatchdogTimer = null;
 
 /** Tracks de áudio remoto (agente CAE) para retomar play após bloqueio de autoplay */
 let remoteAudioTracks = [];
+/** Último RemoteAudioTrack por uid — ao republicar áudio, parar o anterior evita sobreposição / som «travado». */
+let lastRemoteAudioTrackByUid = new Map();
+/** Evita `play()` duplicado se o SDK repetir `user-published` para o mesmo track. */
+let lastRemoteAudioKeyByUid = new Map();
 let agoraAutoplayHooked = false;
+
+function getRemoteAudioTrackKey(track) {
+  if (!track) return "";
+  if (typeof track.getTrackId === "function") {
+    try {
+      return String(track.getTrackId());
+    } catch (_e) {
+      /* ignora */
+    }
+  }
+  return String(track);
+}
+
+function stopRemoteAudioTrackIfAny(track) {
+  if (!track) return;
+  try {
+    if (typeof track.stop === "function") {
+      track.stop();
+    }
+  } catch (_e) {
+    /* track já libertado */
+  }
+}
+
+function pruneRemoteAudioTracksFromClient() {
+  if (!agoraClient) return;
+  const live = new Set();
+  for (const u of agoraClient.remoteUsers || []) {
+    if (u.audioTrack) live.add(u.audioTrack);
+  }
+  remoteAudioTracks = remoteAudioTracks.filter((t) => live.has(t));
+}
 
 let recordingContext = null;
 let recordingStream = null;
@@ -527,7 +563,19 @@ async function trySyncSubscribeCaeAgentAudio(agentUid) {
       if (!user.hasAudio) continue;
       await agoraClient.subscribe(user, "audio");
       if (user.audioTrack) {
+        const uidStr = String(user.uid);
+        const key = getRemoteAudioTrackKey(user.audioTrack);
+        if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
+          log(`RTC: sync subscribe ignorado (mesmo track) uid=${user.uid}`);
+          continue;
+        }
+        lastRemoteAudioKeyByUid.set(uidStr, key);
         markCaeAgentAudioPublished(user.uid);
+        const prev = lastRemoteAudioTrackByUid.get(uidStr);
+        if (prev && prev !== user.audioTrack) {
+          stopRemoteAudioTrackIfAny(prev);
+        }
+        lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
         const already = remoteAudioTracks.some((t) => t === user.audioTrack);
         if (!already) remoteAudioTracks.push(user.audioTrack);
         await playRemoteAudioTrack(user.audioTrack, user.uid);
@@ -785,6 +833,8 @@ async function connectAgora() {
 
   setupAgoraAutoplayHook();
   remoteAudioTracks = [];
+  lastRemoteAudioTrackByUid.clear();
+  lastRemoteAudioKeyByUid.clear();
   resetCaeRemoteAudioState();
 
   isConnectingAgora = true;
@@ -817,12 +867,33 @@ async function connectAgora() {
     agoraClient.on("user-joined", (user) => {
       log(t("logRemoteUserJoined").replace("%s", String(user.uid)));
     });
+    agoraClient.on("user-unpublished", (user, mediaType) => {
+      if (mediaType !== "audio") return;
+      const uidStr = String(user.uid);
+      log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
+      lastRemoteAudioKeyByUid.delete(uidStr);
+      lastRemoteAudioTrackByUid.delete(uidStr);
+      pruneRemoteAudioTracksFromClient();
+    });
     agoraClient.on("user-published", async (user, mediaType) => {
       log(`RTC user-published uid=${user.uid} mediaType=${mediaType}`);
       await agoraClient.subscribe(user, mediaType);
       if (mediaType === "audio" && user.audioTrack) {
+        const uidStr = String(user.uid);
+        const key = getRemoteAudioTrackKey(user.audioTrack);
+        if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
+          return;
+        }
+        lastRemoteAudioKeyByUid.set(uidStr, key);
         markCaeAgentAudioPublished(user.uid);
-        remoteAudioTracks.push(user.audioTrack);
+        const prev = lastRemoteAudioTrackByUid.get(uidStr);
+        if (prev && prev !== user.audioTrack) {
+          stopRemoteAudioTrackIfAny(prev);
+        }
+        lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
+        if (!remoteAudioTracks.some((t) => t === user.audioTrack)) {
+          remoteAudioTracks.push(user.audioTrack);
+        }
         await playRemoteAudioTrack(user.audioTrack, user.uid);
       }
     });
