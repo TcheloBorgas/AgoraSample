@@ -43,7 +43,7 @@ O deploy publica ficheiros estáticos; o **FastAPI tem de estar noutro host** (R
 - `app/`: backend completo
 - `web/`: interface de voz/chat
 - `scripts/`: scripts de teste/simulação
-- `docs/`: documentação técnica
+- `docs/`: documentação técnica (a pasta pode estar no `.gitignore`; ver `docs/FLUXO_CONVERSATIONAL_AI_E_DESAFIO.md` localmente)
 - `data/`: dados locais (tokens)
 
 ---

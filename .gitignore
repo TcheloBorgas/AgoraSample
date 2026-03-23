@@ -15,3 +15,6 @@ credentials.json
 .DS_Store
 Thumbs.db
 .json
+
+# Documentação local / notas de fluxo (não versionada)
+docs/
