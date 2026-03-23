@@ -12,6 +12,28 @@ class AgoraSession:
     uid: int
 
 
+def build_rtc_token_for_uid(channel: str, uid: int, ttl_seconds: int = 86400) -> str:
+    """
+    Token RTC para um UID concreto no canal (ex.: agente CAE com AGORA_CAE_AGENT_UID).
+    O token enviado ao utilizador no browser e sempre para AGORA_UID — nao serve para o agente.
+    Requer AGORA_APP_CERTIFICATE (tokens por uid nao podem ser reutilizados entre UIDs).
+    """
+    if not settings.agora_app_id:
+        raise RuntimeError("AGORA_APP_ID nao configurado")
+    cert = (settings.agora_app_certificate or "").strip()
+    if not cert:
+        raise RuntimeError(
+            "AGORA_APP_CERTIFICATE e obrigatorio para gerar o token RTC do agente CAE. "
+            "O token do utilizador (browser) e valido apenas para AGORA_UID; o agente usa AGORA_CAE_AGENT_UID."
+        )
+    uid_int = int(uid)
+    if uid_int <= 0:
+        uid_int = 10001
+    if uid_int > 2_147_483_647:
+        uid_int = uid_int % 2_147_483_647
+    return _build_rtc_token(settings.agora_app_id, cert, channel, uid_int, ttl_seconds)
+
+
 def _build_rtc_token(app_id: str, certificate: str, channel: str, uid: int, ttl_seconds: int = 86400) -> str:
     from agora_token_builder import RtcTokenBuilder
     from agora_token_builder.RtcTokenBuilder import Role_Publisher

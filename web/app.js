@@ -120,6 +120,7 @@ const UI_TEXTS = {
     logAgoraJoinHint:
       "Se falhar aqui: token inválido ou expirado. No backend defina AGORA_APP_CERTIFICATE (Console Agora) em vez de só AGORA_TEMP_TOKEN.",
     logConnected: "Agora conectada no canal",
+    logRemoteUserJoined: "RTC: participante remoto entrou — uid=%s (esperado: agente CAE).",
     logRemoteAudio: "Áudio remoto ativo",
     logCaeTtsPlaying:
       "TTS CAE (Agora): áudio remoto do agente — voz sintetizada pelo Conversational AI no canal RTC.",
@@ -204,6 +205,7 @@ const UI_TEXTS = {
     logConnecting: "Connecting to Agora...",
     logAlreadyConnected: "Already connected to Agora channel.",
     logConnected: "Agora connected on channel",
+    logRemoteUserJoined: "RTC: remote participant joined — uid=%s (expected: CAE agent).",
     logRemoteAudio: "Remote audio active",
     logCaeTtsPlaying:
       "CAE TTS (Agora): remote agent audio — synthesized by Conversational AI on the RTC channel.",
@@ -288,6 +290,7 @@ const UI_TEXTS = {
     logConnecting: "Conectando con Agora...",
     logAlreadyConnected: "Ya conectado al canal de Agora.",
     logConnected: "Agora conectada en el canal",
+    logRemoteUserJoined: "RTC: participante remoto entró — uid=%s (esperado: agente CAE).",
     logRemoteAudio: "Audio remoto activo",
     logCaeTtsPlaying:
       "TTS CAE (Agora): audio remoto del agente — voz sintetizada por Conversational AI en el canal RTC.",
@@ -697,6 +700,9 @@ async function connectAgora() {
     log(t("logAgoraStepSession"));
     const data = await getAgoraSession(sessionId);
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+    agoraClient.on("user-joined", (user) => {
+      log(t("logRemoteUserJoined").replace("%s", String(user.uid)));
+    });
     agoraClient.on("user-published", async (user, mediaType) => {
       await agoraClient.subscribe(user, mediaType);
       if (mediaType === "audio" && user.audioTrack) {

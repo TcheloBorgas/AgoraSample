@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Any
 
 from app.adapters.agora_cae_client import AgoraConversationalAIClient
+from app.adapters.agora_client import build_rtc_token_for_uid
 from app.adapters.openai_compatible_llm import resolve_openai_compat_llm
 from app.core.config import settings
 
@@ -89,16 +90,24 @@ class CAEService:
         self,
         session_id: str,
         channel: str,
-        token: str,
+        _token: str,
         remote_uid: str,
         language: str,
     ) -> dict[str, Any]:
         name = f"{settings.agora_cae_agent_name_prefix}-{session_id}-{int(time.time())}"
         llm_config = self._build_llm_config(session_id)
 
+        # Token do browser e para AGORA_UID; o agente CAE entra com AGORA_CAE_AGENT_UID — precisa de token proprio.
+        agent_token = build_rtc_token_for_uid(channel, int(settings.agora_cae_agent_uid))
+        logger.info(
+            "CAE join: token RTC gerado no servidor para agent_rtc_uid=%s canal=%s (token do cliente nao e reutilizado).",
+            settings.agora_cae_agent_uid,
+            channel,
+        )
+
         properties: dict[str, Any] = {
             "channel": channel,
-            "token": token,
+            "token": agent_token,
             "agent_rtc_uid": str(settings.agora_cae_agent_uid),
             "remote_rtc_uids": [str(remote_uid)],
             "idle_timeout": 0,

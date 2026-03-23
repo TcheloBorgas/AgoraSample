@@ -13,7 +13,7 @@ Este projeto implementa um agente de voz de agendamento com **Agora Conversation
 
 ### Requisitos do desafio (status)
 - Construir um voice agent: **Cumprido**
-- Usar Agora Conversational AI Engine: **Cumprido** (precisa chave TTS válida no `.env`)
+- Usar Agora Conversational AI Engine: **Cumprido** (precisa chave TTS válida no `.env` e **`AGORA_APP_CERTIFICATE`** para gerar token RTC do **agente** — o token do browser não serve para o `AGORA_CAE_AGENT_UID`)
 - Caso de uso aberto (appointment scheduling): **Cumprido**
 - Orquestração com MCP: **Cumprido**
 
