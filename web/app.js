@@ -5,6 +5,10 @@ let isRtcConnected = false;
 let caeActive = false;
 let localRtcUid = null;
 
+/** Tracks de áudio remoto (agente CAE) para retomar play após bloqueio de autoplay */
+let remoteAudioTracks = [];
+let agoraAutoplayHooked = false;
+
 let recordingContext = null;
 let recordingStream = null;
 let recordingNode = null;
@@ -47,6 +51,9 @@ const ctxConfirmationEl = document.getElementById("ctxConfirmation");
 const ctxExecutedEl = document.getElementById("ctxExecuted");
 const proactiveSuggestionsEl = document.getElementById("proactiveSuggestions");
 const agentTraceEl = document.getElementById("agentTrace");
+const audioUnlockBarEl = document.getElementById("audioUnlockBar");
+const audioUnlockBtnEl = document.getElementById("audioUnlockBtn");
+const audioUnlockTextEl = document.getElementById("audioUnlockText");
 
 const UI_TEXTS = {
   "pt-BR": {
@@ -120,6 +127,13 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE ativo: a transcrição no chat usa captura local (STT). O agente CAE também pode ouvir pelo canal RTC.",
     logCaeFallback: "CAE indisponível. Mantendo fluxo local com voz + chat.",
+    logAutoplayBlocked:
+      "Autoplay bloqueado: o áudio do agente CAE chegou ao browser, mas o Chrome/Safari exigem um clique para tocar. Use «Ativar áudio do agente».",
+    logAudioPlayFailed: "Falha ao iniciar reprodução do áudio remoto",
+    audioUnlockText:
+      "O navegador pode bloquear o áudio remoto (autoplay). Toque no botão para ouvir o agente CAE no canal RTC.",
+    audioUnlockBtn: "Ativar áudio do agente",
+    logAudioResumed: "Áudio remoto retomado após o clique (política de autoplay).",
     logMicError: "Falha de microfone",
     logVoiceError: "Falha na captura de voz",
     logBackendError: "Falha no backend",
@@ -197,6 +211,13 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE active: chat transcription uses local capture (STT). The CAE agent may also listen via RTC.",
     logCaeFallback: "CAE unavailable. Keeping local voice + chat flow.",
+    logAutoplayBlocked:
+      "Autoplay blocked: CAE agent audio arrived but the browser requires a click to play. Use «Enable agent audio».",
+    logAudioPlayFailed: "Failed to start remote audio playback",
+    audioUnlockText:
+      "The browser may block remote audio (autoplay policy). Click the button to hear the CAE agent on the RTC channel.",
+    audioUnlockBtn: "Enable agent audio",
+    logAudioResumed: "Remote audio resumed after click (autoplay policy).",
     logMicError: "Microphone failure",
     logVoiceError: "Voice capture failure",
     logBackendError: "Backend failure",
@@ -274,6 +295,13 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE activo: la transcripción en el chat usa captura local (STT). El agente CAE también puede oír por RTC.",
     logCaeFallback: "CAE no disponible. Manteniendo flujo local de voz + chat.",
+    logAutoplayBlocked:
+      "Autoplay bloqueado: el audio del agente CAE llegó, pero el navegador exige un clic. Usa «Activar audio del agente».",
+    logAudioPlayFailed: "Error al reproducir audio remoto",
+    audioUnlockText:
+      "El navegador puede bloquear el audio remoto (autoplay). Toca el botón para oír al agente CAE en RTC.",
+    audioUnlockBtn: "Activar audio del agente",
+    logAudioResumed: "Audio remoto reanudado tras el clic (política de autoplay).",
     logMicError: "Fallo de micrófono",
     logVoiceError: "Fallo en captura de voz",
     logBackendError: "Fallo del backend",
@@ -383,10 +411,76 @@ function hideErrorPopup() {
 }
 
 function log(message) {
+  const line = `[${new Date().toLocaleTimeString()}] ${message}`;
+  if (typeof console !== "undefined" && console.log) {
+    console.log(line);
+  }
   if (!logEl) return;
-  const time = new Date().toLocaleTimeString();
-  logEl.textContent += `[${time}] ${message}\n`;
+  logEl.textContent += `${line}\n`;
   logEl.scrollTop = logEl.scrollHeight;
+}
+
+function showAudioUnlockBar() {
+  if (!audioUnlockBarEl) return;
+  audioUnlockBarEl.classList.remove("hidden");
+}
+
+function hideAudioUnlockBar() {
+  if (!audioUnlockBarEl) return;
+  audioUnlockBarEl.classList.add("hidden");
+}
+
+function setupAgoraAutoplayHook() {
+  if (agoraAutoplayHooked || !window.AgoraRTC) return;
+  agoraAutoplayHooked = true;
+  try {
+    AgoraRTC.onAutoplayFailed = () => {
+      log(t("logAutoplayBlocked"));
+      showAudioUnlockBar();
+    };
+  } catch (_e) {
+    /* SDK antigo sem onAutoplayFailed */
+  }
+}
+
+async function playRemoteAudioTrack(track, uid) {
+  if (!track) return;
+  try {
+    try {
+      if (typeof track.setVolume === "function") {
+        track.setVolume(100);
+      }
+    } catch (_v) {
+      /* volume opcional */
+    }
+    const ret = track.play();
+    if (ret && typeof ret.then === "function") {
+      await ret;
+    }
+    log(`${t("logRemoteAudio")} (uid=${uid}).`);
+    log(t("logCaeTtsPlaying"));
+    hideAudioUnlockBar();
+  } catch (err) {
+    log(`${t("logAudioPlayFailed")}: ${err?.message || err}`);
+    showAudioUnlockBar();
+  }
+}
+
+async function resumeAllRemoteAudio() {
+  for (let i = 0; i < remoteAudioTracks.length; i += 1) {
+    const tr = remoteAudioTracks[i];
+    try {
+      if (typeof tr.setVolume === "function") tr.setVolume(100);
+      const ret = tr.play();
+      if (ret && typeof ret.then === "function") {
+        await ret;
+      }
+    } catch (e) {
+      log(String(e?.message || e));
+    }
+  }
+  hideAudioUnlockBar();
+  log(t("logAudioResumed"));
 }
 
 function applyUiTranslations() {
@@ -418,6 +512,8 @@ function applyUiTranslations() {
     traceTitle: "traceTitle",
     debugSummary: "debugSummary",
     errorModalClose: "errorPopupClose",
+    audioUnlockText: "audioUnlockText",
+    audioUnlockBtn: "audioUnlockBtn",
   };
   Object.entries(map).forEach(([id, key]) => {
     const el = document.getElementById(id);
@@ -591,6 +687,9 @@ async function connectAgora() {
     return;
   }
 
+  setupAgoraAutoplayHook();
+  remoteAudioTracks = [];
+
   isConnectingAgora = true;
   connectAgoraBtnEl.disabled = true;
   const sessionId = sessionIdEl.value.trim();
@@ -600,10 +699,9 @@ async function connectAgora() {
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     agoraClient.on("user-published", async (user, mediaType) => {
       await agoraClient.subscribe(user, mediaType);
-      if (mediaType === "audio") {
-        user.audioTrack.play();
-        log(`${t("logRemoteAudio")} (uid=${user.uid}).`);
-        log(t("logCaeTtsPlaying"));
+      if (mediaType === "audio" && user.audioTrack) {
+        remoteAudioTracks.push(user.audioTrack);
+        await playRemoteAudioTrack(user.audioTrack, user.uid);
       }
     });
     log(t("logAgoraStepJoin"));
@@ -927,6 +1025,10 @@ addChatMessage("assistant", t("welcomeAssistant"));
 setInterval(() => {
   pollVoiceState();
 }, 2500);
+
+audioUnlockBtnEl?.addEventListener("click", () => {
+  resumeAllRemoteAudio();
+});
 
 (function setupErrorModal() {
   const modal = document.getElementById("errorModal");

@@ -148,6 +148,23 @@
               </div>
             </div>
 
+            <div
+              id="audioUnlockBar"
+              class="mb-3 hidden flex flex-wrap items-center justify-between gap-2 rounded-xl border border-state-warning/40 bg-state-warning/10 px-3 py-2.5"
+              role="status"
+            >
+              <span id="audioUnlockText" class="max-w-[min(100%,28rem)] text-xs leading-snug text-text-secondary">
+                O navegador pode bloquear o áudio remoto (política de autoplay). Toque no botão para ouvir o agente CAE.
+              </span>
+              <button
+                type="button"
+                id="audioUnlockBtn"
+                class="shrink-0 rounded-lg border border-accent-primary/50 bg-accent-primary/20 px-3 py-1.5 text-xs font-medium text-accent-primary transition hover:bg-accent-primary/30"
+              >
+                Ativar áudio do agente
+              </button>
+            </div>
+
             <div class="mb-3 grid grid-cols-1 gap-2 md:grid-cols-2">
               <label class="block">
                 <span id="sessionLabel" class="mb-1 block text-xs text-text-muted">Session ID</span>

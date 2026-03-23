@@ -13,6 +13,8 @@ Fluxo importante:
 
 **Nota sobre voz e chat:** o ASR do CAE roda na Agora e **não** é enviado automaticamente para o FastAPI nem aparece como bolha no chat. Para ver transcrição no chat, o botão de voz usa **captura local +** `/api/system/stt/transcribe` (mesmo com CAE ativo).
 
+**Áudio no browser:** Chrome/Safari podem bloquear **autoplay** do áudio remoto (o evento `user-published` não conta como gesto do utilizador). O `app.js` regista `AgoraRTC.onAutoplayFailed` e mostra o botão **«Ativar áudio do agente»** para retomar o `play()` dos tracks remotos.
+
 ---
 ## English
 Client-side UI for RTC, CAE startup, chat, STT fallback, and streaming responses. Synthesized voice is **CAE TTS only** (remote RTC audio); chat replies are text-only.
