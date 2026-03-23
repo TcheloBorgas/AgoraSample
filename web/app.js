@@ -17,6 +17,25 @@ let lastRemoteAudioTrackByUid = new Map();
 let lastRemoteAudioKeyByUid = new Map();
 let agoraAutoplayHooked = false;
 
+/** Debounce de áudio remoto: CAE/TTS alterna mute/unmute muito rápido — funde rajadas e evita centenas de subscribe/play. */
+const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 110;
+let remoteAudioPublishDebounceTimers = new Map();
+
+function clearRemoteAudioPublishDebouncers() {
+  for (const tid of remoteAudioPublishDebounceTimers.values()) {
+    clearTimeout(tid);
+  }
+  remoteAudioPublishDebounceTimers.clear();
+}
+
+function cancelRemoteAudioPublishDebounce(uidStr) {
+  const tid = remoteAudioPublishDebounceTimers.get(uidStr);
+  if (tid) {
+    clearTimeout(tid);
+    remoteAudioPublishDebounceTimers.delete(uidStr);
+  }
+}
+
 function getRemoteAudioTrackKey(track) {
   if (!track) return "";
   if (typeof track.getTrackId === "function") {
@@ -556,32 +575,13 @@ function markCaeAgentAudioPublished(uid) {
  */
 async function trySyncSubscribeCaeAgentAudio(agentUid) {
   if (!agoraClient || agentUid == null) return;
+  const uidStr = String(agentUid);
+  const remoteUsers = agoraClient.remoteUsers || [];
+  const hasPublished = remoteUsers.some((u) => String(u.uid) === uidStr && u.hasAudio);
+  if (!hasPublished) return;
   try {
-    const remoteUsers = agoraClient.remoteUsers || [];
-    for (const user of remoteUsers) {
-      if (String(user.uid) !== String(agentUid)) continue;
-      if (!user.hasAudio) continue;
-      await agoraClient.subscribe(user, "audio");
-      if (user.audioTrack) {
-        const uidStr = String(user.uid);
-        const key = getRemoteAudioTrackKey(user.audioTrack);
-        if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
-          log(`RTC: sync subscribe ignorado (mesmo track) uid=${user.uid}`);
-          continue;
-        }
-        lastRemoteAudioKeyByUid.set(uidStr, key);
-        markCaeAgentAudioPublished(user.uid);
-        const prev = lastRemoteAudioTrackByUid.get(uidStr);
-        if (prev && prev !== user.audioTrack) {
-          stopRemoteAudioTrackIfAny(prev);
-        }
-        lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
-        const already = remoteAudioTracks.some((t) => t === user.audioTrack);
-        if (!already) remoteAudioTracks.push(user.audioTrack);
-        await playRemoteAudioTrack(user.audioTrack, user.uid);
-        log(`RTC: sync subscribe áudio do agente uid=${user.uid}`);
-      }
-    }
+    await applyRemoteUserAudioPublished(uidStr);
+    log(`RTC: sync subscribe áudio do agente uid=${agentUid}`);
   } catch (err) {
     log(`RTC: sync subscribe: ${err?.message || err}`);
   }
@@ -608,6 +608,38 @@ async function playRemoteAudioTrack(track, uid) {
     log(`${t("logAudioPlayFailed")}: ${err?.message || err}`);
     showAudioUnlockBar();
   }
+}
+
+/**
+ * Aplica subscribe + play uma vez, com user atual de `remoteUsers` (após debounce).
+ * Evita fechar sobre eventos stale quando o SDK dispara mute/unmute em sequência.
+ */
+async function applyRemoteUserAudioPublished(uidStr) {
+  if (!agoraClient) return;
+  const users = agoraClient.remoteUsers || [];
+  const user = users.find((u) => String(u.uid) === uidStr);
+  if (!user || !user.hasAudio || !user.audioTrack) return;
+  try {
+    await agoraClient.subscribe(user, "audio");
+  } catch (subErr) {
+    log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
+    return;
+  }
+  const key = getRemoteAudioTrackKey(user.audioTrack);
+  if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
+    return;
+  }
+  lastRemoteAudioKeyByUid.set(uidStr, key);
+  markCaeAgentAudioPublished(user.uid);
+  const prev = lastRemoteAudioTrackByUid.get(uidStr);
+  if (prev && prev !== user.audioTrack) {
+    stopRemoteAudioTrackIfAny(prev);
+  }
+  lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
+  if (!remoteAudioTracks.some((tr) => tr === user.audioTrack)) {
+    remoteAudioTracks.push(user.audioTrack);
+  }
+  await playRemoteAudioTrack(user.audioTrack, user.uid);
 }
 
 async function resumeAllRemoteAudio() {
@@ -835,6 +867,7 @@ async function connectAgora() {
   remoteAudioTracks = [];
   lastRemoteAudioTrackByUid.clear();
   lastRemoteAudioKeyByUid.clear();
+  clearRemoteAudioPublishDebouncers();
   resetCaeRemoteAudioState();
 
   isConnectingAgora = true;
@@ -870,32 +903,29 @@ async function connectAgora() {
     agoraClient.on("user-unpublished", (user, mediaType) => {
       if (mediaType !== "audio") return;
       const uidStr = String(user.uid);
+      cancelRemoteAudioPublishDebounce(uidStr);
       log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
       lastRemoteAudioKeyByUid.delete(uidStr);
       lastRemoteAudioTrackByUid.delete(uidStr);
       pruneRemoteAudioTracksFromClient();
     });
-    agoraClient.on("user-published", async (user, mediaType) => {
+    agoraClient.on("user-published", (user, mediaType) => {
       log(`RTC user-published uid=${user.uid} mediaType=${mediaType}`);
-      await agoraClient.subscribe(user, mediaType);
-      if (mediaType === "audio" && user.audioTrack) {
-        const uidStr = String(user.uid);
-        const key = getRemoteAudioTrackKey(user.audioTrack);
-        if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
-          return;
-        }
-        lastRemoteAudioKeyByUid.set(uidStr, key);
-        markCaeAgentAudioPublished(user.uid);
-        const prev = lastRemoteAudioTrackByUid.get(uidStr);
-        if (prev && prev !== user.audioTrack) {
-          stopRemoteAudioTrackIfAny(prev);
-        }
-        lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
-        if (!remoteAudioTracks.some((t) => t === user.audioTrack)) {
-          remoteAudioTracks.push(user.audioTrack);
-        }
-        await playRemoteAudioTrack(user.audioTrack, user.uid);
+      if (mediaType !== "audio") {
+        agoraClient.subscribe(user, mediaType).catch((err) => {
+          log(`RTC subscribe ${mediaType}: ${err?.message || err}`);
+        });
+        return;
       }
+      const uidStr = String(user.uid);
+      cancelRemoteAudioPublishDebounce(uidStr);
+      const timerId = setTimeout(() => {
+        remoteAudioPublishDebounceTimers.delete(uidStr);
+        applyRemoteUserAudioPublished(uidStr).catch((err) => {
+          log(`RTC áudio remoto (debounce): ${err?.message || err}`);
+        });
+      }, REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS);
+      remoteAudioPublishDebounceTimers.set(uidStr, timerId);
     });
     log(t("logAgoraStepJoin"));
     try {
