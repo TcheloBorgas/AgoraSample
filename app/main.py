@@ -37,3 +37,4 @@ app.include_router(cae_router)
 web_dir = Path(__file__).resolve().parents[1] / "web"
 if web_dir.exists():
     app.mount("/", StaticFiles(directory=str(web_dir), html=True), name="web")
+# up
