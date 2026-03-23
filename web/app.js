@@ -69,6 +69,7 @@ const UI_TEXTS = {
     connectAgoraBtn: "Conectar Agora",
     voiceToggleIdle: "Iniciar voz",
     voiceToggleRecording: "Parar captura",
+    voiceToggleCaeLive: "CAE ativo (fale agora)",
     sendChatBtn: "Enviar",
     interruptAgentBtn: "Interromper resposta do agente",
     ctxSessionLabel: "Sessão",
@@ -147,6 +148,7 @@ const UI_TEXTS = {
     connectAgoraBtn: "Connect Agora",
     voiceToggleIdle: "Start voice",
     voiceToggleRecording: "Stop capture",
+    voiceToggleCaeLive: "CAE live (speak now)",
     sendChatBtn: "Send",
     interruptAgentBtn: "Interrupt agent response",
     ctxSessionLabel: "Session",
@@ -219,6 +221,7 @@ const UI_TEXTS = {
     connectAgoraBtn: "Conectar Agora",
     voiceToggleIdle: "Iniciar voz",
     voiceToggleRecording: "Detener captura",
+    voiceToggleCaeLive: "CAE activo (habla ahora)",
     sendChatBtn: "Enviar",
     interruptAgentBtn: "Interrumpir respuesta del agente",
     ctxSessionLabel: "Sesión",
@@ -275,6 +278,14 @@ const UI_TEXTS = {
 
 function t(key) {
   return UI_TEXTS[uiLocale]?.[key] ?? UI_TEXTS["pt-BR"][key] ?? key;
+}
+
+function refreshVoiceToggleButton() {
+  if (caeActive) {
+    voiceToggleBtnEl.textContent = t("voiceToggleCaeLive");
+    return;
+  }
+  voiceToggleBtnEl.textContent = isRecording ? t("voiceToggleRecording") : t("voiceToggleIdle");
 }
 
 function looksLikeHtmlPayload(text) {
@@ -397,9 +408,7 @@ function applyUiTranslations() {
     if (el) el.textContent = t(key);
   });
   chatInputEl.placeholder = t("chatPlaceholder");
-  if (!isRecording) {
-    voiceToggleBtnEl.textContent = t("voiceToggleIdle");
-  }
+  refreshVoiceToggleButton();
   setContextState({});
   setRtcStatus(isRtcConnected, isRtcConnected ? `uid=${localRtcUid}` : t("statusWaiting"));
   setVoiceUiState(voiceUiState);
@@ -611,9 +620,11 @@ async function connectAgora() {
       } else {
         log(t("logCaeFallback"));
       }
+      refreshVoiceToggleButton();
     } catch (caeErr) {
       caeActive = false;
       log(`${t("logCaeFallback")} — ${caeErr?.message || caeErr || ""}`);
+      refreshVoiceToggleButton();
     }
   } finally {
     isConnectingAgora = false;
@@ -794,7 +805,7 @@ async function startRecording() {
   recordingNode.connect(recordingContext.destination);
   isRecording = true;
   setVoiceUiState("listening");
-  voiceToggleBtnEl.textContent = t("voiceToggleRecording");
+  refreshVoiceToggleButton();
 }
 
 async function stopRecordingAndSend() {
@@ -860,6 +871,7 @@ voiceToggleBtnEl.addEventListener("click", async () => {
   try {
     if (caeActive) {
       log(t("logCaeActive"));
+      refreshVoiceToggleButton();
       return;
     }
     if (!isRecording) {
@@ -871,11 +883,11 @@ voiceToggleBtnEl.addEventListener("click", async () => {
     }
     await stopRecordingAndSend();
     if (!window.speechSynthesis.speaking) setVoiceUiState("idle");
-    voiceToggleBtnEl.textContent = t("voiceToggleIdle");
+    refreshVoiceToggleButton();
   } catch (err) {
     const detail = err?.message || String(err);
     setVoiceUiState("error");
-    voiceToggleBtnEl.textContent = t("voiceToggleIdle");
+    refreshVoiceToggleButton();
     log(`${t("logVoiceError")}: ${detail}`);
     showErrorPopup(detail);
   }
