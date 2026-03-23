@@ -70,8 +70,17 @@ class ConversationService:
         user_id: str,
         message: str,
         use_cloud_fallback_for_unknown: bool = True,
+        request_source: str = "http",
     ) -> AssistantResponse:
         start_ts = perf_counter()
+        if request_source == "cae_llm":
+            logger.info(
+                "CAE_LLM handle_message inicio session_id=%s user_id=%s use_cloud_fallback=%s msg_len=%s",
+                session_id,
+                user_id,
+                use_cloud_fallback_for_unknown,
+                len(message or ""),
+            )
         state = self.memory.get_session(session_id, user_id)
         trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=state.language)
 
@@ -169,6 +178,7 @@ class ConversationService:
                             intent_result.missing_fields,
                             message,
                             trace,
+                            use_cloud_fallback_for_unknown,
                         )
                     elif intent_result.intent == "unknown":
                         text = self.language.in_language(
@@ -197,11 +207,19 @@ class ConversationService:
                             intent_result.missing_fields,
                             message,
                             trace,
+                            use_cloud_fallback_for_unknown,
                         )
             else:
                 state.pending_confirmation = None
                 response = self._handle_intent(
-                    state, user_id, intent_result.intent, intent_result.entities, intent_result.missing_fields, message, trace
+                    state,
+                    user_id,
+                    intent_result.intent,
+                    intent_result.entities,
+                    intent_result.missing_fields,
+                    message,
+                    trace,
+                    use_cloud_fallback_for_unknown,
                 )
         elif state.pending_confirmation:
             response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace)
@@ -219,12 +237,23 @@ class ConversationService:
                 text = self.fallback.misplaced_confirm_yes_during_booking(missing, state.language)
                 response = self._build_response(state, "create_meeting", text, False, False)
             else:
-                response = self._reparse_as_new_intent(state, user_id, message, trace)
+                response = self._reparse_as_new_intent(
+                    state, user_id, message, trace, use_cloud_fallback_for_unknown
+                )
         elif intent_result.intent in {"confirm_yes", "confirm_no"}:
-            response = self._reparse_as_new_intent(state, user_id, message, trace)
+            response = self._reparse_as_new_intent(
+                state, user_id, message, trace, use_cloud_fallback_for_unknown
+            )
         else:
             response = self._handle_intent(
-                state, user_id, intent_result.intent, intent_result.entities, intent_result.missing_fields, message, trace
+                state,
+                user_id,
+                intent_result.intent,
+                intent_result.entities,
+                intent_result.missing_fields,
+                message,
+                trace,
+                use_cloud_fallback_for_unknown,
             )
 
         trigger = "session_start" if len(state.short_memory) <= 2 else "after_list" if response.intent == "list_meetings" else "generic"
@@ -271,8 +300,22 @@ class ConversationService:
                 "session_id": session_id,
                 "intent": response.intent,
                 "duration_ms": round(duration_ms, 2),
+                "request_source": request_source,
             },
         )
+        if request_source == "cae_llm":
+            rt = (response.response_text or "").strip()
+            logger.info(
+                "CAE_LLM handle_message fim session_id=%s intent=%s needs_confirmation=%s action_executed=%s "
+                "response_len=%s duration_ms=%.2f response_preview=%r",
+                session_id,
+                response.intent,
+                response.needs_confirmation,
+                response.action_executed,
+                len(rt),
+                duration_ms,
+                rt[:400] + ("…" if len(rt) > 400 else ""),
+            )
         return response
 
     def _handle_intent(
@@ -284,6 +327,7 @@ class ConversationService:
         missing_fields: list[str],
         raw_message: str,
         trace: TraceContext,
+        use_cloud_fallback_for_unknown: bool = True,
     ) -> AssistantResponse:
         if intent == "unknown":
             text = self._smart_unknown_reply(
@@ -443,6 +487,14 @@ class ConversationService:
         use_cloud_fallback_for_unknown: bool = True,
     ) -> str:
         prompt = raw_message or "Usuario nao especificou claramente o pedido."
+        if not use_cloud_fallback_for_unknown:
+            out = self.fallback.unknown_intent(language)
+            logger.info(
+                "CAE_LLM _smart_unknown_reply: cloud fallback desligado; resposta deterministica len=%s preview=%r",
+                len(out),
+                out[:200],
+            )
+            return out
         if use_cloud_fallback_for_unknown and self.openai_compat_llm is not None and OpenAICompatibleLlmClient.is_configured():
             try:
                 result = self.openai_compat_llm.chat_reply_sync(prompt, language=language)
@@ -465,6 +517,7 @@ class ConversationService:
         user_id: str,
         raw_message: str,
         trace: TraceContext,
+        use_cloud_fallback_for_unknown: bool = True,
     ) -> AssistantResponse:
         """User said something like 'confirm' but there's no pending action.
         Re-parse the raw text as a regular actionable command so the agent
@@ -487,7 +540,16 @@ class ConversationService:
                 self._persist_meeting_draft(state, merged)
             else:
                 missing = self.intents._required_fields(fallback_intent, entities)
-            return self._handle_intent(state, user_id, fallback_intent, entities, missing, raw_message, trace)
+            return self._handle_intent(
+                state,
+                user_id,
+                fallback_intent,
+                entities,
+                missing,
+                raw_message,
+                trace,
+                use_cloud_fallback_for_unknown,
+            )
 
         text = self.language.in_language(
             "Não há nenhuma operação pendente para confirmar. Diga o que deseja: criar, consultar, reagendar ou cancelar uma reunião.",

@@ -142,6 +142,19 @@ class CAEService:
                 }
             ]
 
+        llm_u = str(properties.get("llm", {}).get("url", ""))[:120]
+        fail_msg = str(properties.get("llm", {}).get("failure_message", ""))[:160]
+        greet_msg = str(properties.get("llm", {}).get("greeting_message", ""))[:120]
+        logger.info(
+            "CAE join resumo LLM: url_prefix=%r output_modalities=%s failure_message_preview=%r "
+            "greeting_preview=%r mcp_tools=%s",
+            llm_u,
+            properties.get("llm", {}).get("output_modalities"),
+            fail_msg,
+            greet_msg,
+            bool(properties.get("llm", {}).get("mcp_servers")),
+        )
+
         return {"name": name, "properties": properties}
 
     def describe_tts_public(self, language: str) -> dict[str, Any]:

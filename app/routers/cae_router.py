@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 import time
+import traceback
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -16,6 +18,28 @@ from app.adapters.ollama_client import OllamaClient
 
 router = APIRouter(prefix="/api/cae", tags=["cae"])
 logger = logging.getLogger(__name__)
+
+_FAILURE_SNIPPETS_PT = (
+    "não consegui obter resposta",
+    "nao consegui obter resposta",
+    "tente de novo",
+)
+_FAILURE_SNIPPETS_EN = ("couldn't get a response", "try again")
+
+
+def _json_for_log(obj: Any, max_len: int = 6000) -> str:
+    try:
+        s = json.dumps(obj, ensure_ascii=False, default=str)
+    except Exception:
+        s = repr(obj)
+    if len(s) > max_len:
+        return f"{s[:max_len]}... [truncado len_total={len(s)}]"
+    return s
+
+
+def _looks_like_cae_failure_tts(text: str) -> bool:
+    t = (text or "").lower()
+    return any(x in t for x in _FAILURE_SNIPPETS_PT) or any(x in t for x in _FAILURE_SNIPPETS_EN)
 
 
 class CAEStartRequest(BaseModel):
@@ -97,30 +121,114 @@ async def cae_llm_callback(
     """
     Callback em estilo OpenAI para o CAE em modo llm.vendor=custom/style=openai.
     """
-    payload = await request.json()
-    user_text = _extract_user_text(payload)
-    if not user_text:
-        user_text = "Continue em portugues com uma resposta curta."
-
-    result = conversation.handle_message(
-        session_id=session_id,
-        user_id=user_id,
-        message=user_text,
-        use_cloud_fallback_for_unknown=False,
+    t0 = time.perf_counter()
+    client_host = getattr(request.client, "host", None)
+    xff = request.headers.get("x-forwarded-for")
+    xri = request.headers.get("x-request-id")
+    ua = request.headers.get("user-agent", "")[:200]
+    logger.info(
+        "CAE_LLM POST inicio session_id=%r user_id=%r client=%s x_forwarded_for=%s "
+        "x_request_id=%s user_agent=%r",
+        session_id,
+        user_id,
+        client_host,
+        xff,
+        xri,
+        ua,
     )
-    return {
-        "id": f"chatcmpl-{int(time.time())}",
-        "object": "chat.completion",
-        "created": int(time.time()),
-        "model": "local-scheduler-agent",
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": result.response_text},
-                "finish_reason": "stop",
-            }
-        ],
-    }
+    try:
+        raw_body = await request.body()
+        body_len = len(raw_body)
+        try:
+            payload = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+        except json.JSONDecodeError as je:
+            logger.error(
+                "CAE_LLM corpo JSON invalido len=%s erro=%s raw_preview=%r",
+                body_len,
+                je,
+                (raw_body[:500] if raw_body else b""),
+            )
+            raise HTTPException(status_code=400, detail="Invalid JSON body") from je
+
+        logger.info(
+            "CAE_LLM payload keys=%s body_len=%s payload_json=%s",
+            list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+            body_len,
+            _json_for_log(payload, max_len=8000),
+        )
+
+        user_text = _extract_user_text(payload)
+        if not user_text:
+            user_text = "Continue em portugues com uma resposta curta."
+            logger.warning("CAE_LLM nenhum texto de user extraido; usando fallback curto.")
+
+        logger.info(
+            "CAE_LLM user_text len=%s preview=%r",
+            len(user_text),
+            user_text[:500] + ("…" if len(user_text) > 500 else ""),
+        )
+
+        result = conversation.handle_message(
+            session_id=session_id,
+            user_id=user_id,
+            message=user_text,
+            use_cloud_fallback_for_unknown=False,
+            request_source="cae_llm",
+        )
+        out_text = (result.response_text or "").strip()
+        if not out_text:
+            logger.error(
+                "CAE_LLM response_text VAZIO apos handle_message intent=%s — Agora pode falhar ou falar mensagem de erro.",
+                result.intent,
+            )
+            out_text = (
+                "Desculpe, não consegui gerar uma resposta agora. Pode repetir em uma frase o que deseja?"
+            )
+
+        if _looks_like_cae_failure_tts(out_text):
+            logger.warning(
+                "CAE_LLM ATENCAO: response_text parece a mensagem de falha do CAE ou similar — "
+                "verifique se nao e eco do failure_message. preview=%r",
+                out_text[:300],
+            )
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        body_out = {
+            "id": f"chatcmpl-{int(time.time())}",
+            "object": "chat.completion",
+            "created": int(time.time()),
+            "model": "local-scheduler-agent",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": out_text},
+                    "finish_reason": "stop",
+                }
+            ],
+        }
+        logger.info(
+            "CAE_LLM POST sucesso session_id=%s intent=%s needs_confirmation=%s response_len=%s elapsed_ms=%.2f "
+            "body_out=%s",
+            session_id,
+            result.intent,
+            result.needs_confirmation,
+            len(out_text),
+            elapsed_ms,
+            _json_for_log(body_out, max_len=4000),
+        )
+        return body_out
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "CAE_LLM POST EXCECAO session_id=%r user_id=%r tipo=%s msg=%r\n%s",
+            session_id,
+            user_id,
+            type(exc).__name__,
+            str(exc),
+            traceback.format_exc(),
+        )
+        raise HTTPException(status_code=500, detail=f"CAE LLM callback failed: {exc!s}") from exc
 
 
 class MCPRequest(BaseModel):
