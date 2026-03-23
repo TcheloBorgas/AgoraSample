@@ -41,11 +41,18 @@ async def start_cae_agent(
             remote_uid=payload.remote_uid,
             language=payload.language,
         )
+        tts_public = service.describe_tts_public(payload.language)
+        logger.info(
+            "Resposta /api/cae/agent/start: CAE ativo; voce deve ouvir a voz do agente via track de audio remoto RTC "
+            "(TTS do pipeline CAE / Agora). tts=%s",
+            tts_public,
+        )
         return {
             "started": True,
             "agent_id": started.agent_id,
             "status": started.status,
             "session_id": started.session_id,
+            "cae_tts": tts_public,
         }
     except Exception as exc:  # noqa: BLE001
         detail = str(exc) if str(exc).strip() else repr(exc)

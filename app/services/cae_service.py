@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,6 +9,8 @@ from typing import Any
 from app.adapters.agora_cae_client import AgoraConversationalAIClient
 from app.adapters.openai_compatible_llm import resolve_openai_compat_llm
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -47,6 +50,17 @@ class CAEService:
             started_at=datetime.utcnow(),
         )
         self._sessions[session_id] = session
+        tts_pub = self.describe_tts_public(language)
+        logger.info(
+            "CAE agente iniciado: a voz do agente no canal RTC vem do TTS configurado no CAE (Agora Conversational AI), "
+            "nao do backend FastAPI. session_id=%s agent_id=%s channel=%s remote_uid=%s agent_rtc_uid=%s tts=%s",
+            session_id,
+            session.agent_id,
+            channel,
+            remote_uid,
+            settings.agora_cae_agent_uid,
+            tts_pub,
+        )
         return session
 
     async def stop_agent_for_session(self, session_id: str) -> dict[str, Any]:
@@ -120,6 +134,33 @@ class CAEService:
             ]
 
         return {"name": name, "properties": properties}
+
+    def describe_tts_public(self, language: str) -> dict[str, Any]:
+        """
+        Resumo seguro (sem chaves) do TTS do CAE para logs e respostas de API.
+        A sintese de voz do agente e feita pela Agora CAE conforme este vendor.
+        """
+        vendor = settings.agora_cae_tts_vendor.lower()
+        if vendor == "openai":
+            return {
+                "pipeline": "cae_tts",
+                "vendor": "openai",
+                "model": settings.agora_cae_tts_openai_model,
+                "voice": settings.agora_cae_tts_openai_voice,
+            }
+        if vendor == "elevenlabs":
+            return {
+                "pipeline": "cae_tts",
+                "vendor": "elevenlabs",
+                "model_id": settings.agora_cae_tts_elevenlabs_model_id,
+                "voice_id": settings.agora_cae_tts_elevenlabs_voice_id,
+            }
+        return {
+            "pipeline": "cae_tts",
+            "vendor": "microsoft",
+            "region": settings.agora_cae_tts_azure_region,
+            "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
+        }
 
     def _build_llm_config(self, session_id: str) -> dict[str, Any]:
         sys_content = (

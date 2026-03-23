@@ -114,6 +114,8 @@ const UI_TEXTS = {
       "Se falhar aqui: token inválido ou expirado. No backend defina AGORA_APP_CERTIFICATE (Console Agora) em vez de só AGORA_TEMP_TOKEN.",
     logConnected: "Agora conectada no canal",
     logRemoteAudio: "Áudio remoto ativo",
+    logCaeTtsPlaying:
+      "TTS CAE (Agora): áudio remoto do agente — voz sintetizada pelo Conversational AI no canal RTC.",
     logCaeActive: "CAE ativo. Fale normalmente sem usar captura local.",
     logCaeLocalRecord:
       "CAE ativo: a transcrição no chat usa captura local (STT). O agente CAE também pode ouvir pelo canal RTC.",
@@ -189,6 +191,8 @@ const UI_TEXTS = {
     logAlreadyConnected: "Already connected to Agora channel.",
     logConnected: "Agora connected on channel",
     logRemoteAudio: "Remote audio active",
+    logCaeTtsPlaying:
+      "CAE TTS (Agora): remote agent audio — synthesized by Conversational AI on the RTC channel.",
     logCaeActive: "CAE active. Speak normally without local capture.",
     logCaeLocalRecord:
       "CAE active: chat transcription uses local capture (STT). The CAE agent may also listen via RTC.",
@@ -264,6 +268,8 @@ const UI_TEXTS = {
     logAlreadyConnected: "Ya conectado al canal de Agora.",
     logConnected: "Agora conectada en el canal",
     logRemoteAudio: "Audio remoto activo",
+    logCaeTtsPlaying:
+      "TTS CAE (Agora): audio remoto del agente — voz sintetizada por Conversational AI en el canal RTC.",
     logCaeActive: "CAE activo. Habla normalmente sin captura local.",
     logCaeLocalRecord:
       "CAE activo: la transcripción en el chat usa captura local (STT). El agente CAE también puede oír por RTC.",
@@ -542,14 +548,6 @@ function createStreamingAssistantMessage() {
   };
 }
 
-async function setAgentSpeakingOnServer(speaking) {
-  const sessionId = sessionIdEl.value.trim();
-  if (!sessionId) return;
-  try {
-    await fetch(apiUrl(`/api/conversation/${sessionId}/voice/agent-speaking/${speaking}`), { method: "POST" });
-  } catch (_err) {}
-}
-
 async function signalInterrupt() {
   const sessionId = sessionIdEl.value.trim();
   if (!sessionId) return;
@@ -605,6 +603,7 @@ async function connectAgora() {
       if (mediaType === "audio") {
         user.audioTrack.play();
         log(`${t("logRemoteAudio")} (uid=${user.uid}).`);
+        log(t("logCaeTtsPlaying"));
       }
     });
     log(t("logAgoraStepJoin"));
@@ -625,6 +624,9 @@ async function connectAgora() {
     try {
       const cae = await startCaeAgent(sessionId, data.channel, data.token, localRtcUid);
       caeActive = cae?.started !== false;
+      if (cae?.cae_tts) {
+        log(`CAE TTS (backend): ${JSON.stringify(cae.cae_tts)}`);
+      }
       if (caeActive) {
         log(t("logCaeActive"));
       } else {
@@ -640,30 +642,6 @@ async function connectAgora() {
     isConnectingAgora = false;
     connectAgoraBtnEl.disabled = false;
   }
-}
-
-function speak(text, backendLanguage) {
-  const utterance = new SpeechSynthesisUtterance(text);
-  if (backendLanguage === "en") utterance.lang = "en-US";
-  else if (backendLanguage === "es") utterance.lang = "es-ES";
-  else utterance.lang = getSpeechLocaleFromUi();
-
-  utterance.onstart = () => {
-    setVoiceUiState("speaking");
-    setAgentSpeakingOnServer(true);
-  };
-  utterance.onend = () => {
-    setAgentSpeakingOnServer(false);
-    if (!isRecording) setVoiceUiState("idle");
-  };
-  utterance.onerror = (ev) => {
-    setAgentSpeakingOnServer(false);
-    const detail = ev?.error || "speech-synthesis";
-    log(`TTS (${detail}): leia a resposta no chat; o agente já respondeu.`);
-    if (!isRecording) setVoiceUiState("idle");
-  };
-  window.speechSynthesis.cancel();
-  window.speechSynthesis.speak(utterance);
 }
 
 async function sendMessage(message) {
@@ -746,7 +724,6 @@ async function sendMessage(message) {
   renderProactiveSuggestions(finalPayload.proactive_suggestions || []);
   renderAgentTrace(finalPayload.trace || null);
   if (!isRecording) setVoiceUiState("idle");
-  speak(finalPayload.response_text, finalPayload.language);
 }
 
 function floatTo16BitPCM(input) {
@@ -847,7 +824,6 @@ async function stopRecordingAndSend() {
 }
 
 async function interruptAgent() {
-  window.speechSynthesis.cancel();
   await signalInterrupt();
   setVoiceUiState("interrupted");
 }
@@ -883,14 +859,11 @@ voiceToggleBtnEl.addEventListener("click", async () => {
       if (caeActive) {
         log(t("logCaeLocalRecord"));
       }
-      if (window.speechSynthesis.speaking) {
-        await interruptAgent();
-      }
       await startRecording();
       return;
     }
     await stopRecordingAndSend();
-    if (!window.speechSynthesis.speaking) setVoiceUiState("idle");
+    setVoiceUiState("idle");
     refreshVoiceToggleButton();
   } catch (err) {
     const detail = err?.message || String(err);
