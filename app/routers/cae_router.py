@@ -7,6 +7,7 @@ import traceback
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from app.adapters.mcp_tools import CalendarMcpTools
@@ -40,6 +41,34 @@ def _json_for_log(obj: Any, max_len: int = 6000) -> str:
 def _looks_like_cae_failure_tts(text: str) -> bool:
     t = (text or "").lower()
     return any(x in t for x in _FAILURE_SNIPPETS_PT) or any(x in t for x in _FAILURE_SNIPPETS_EN)
+
+
+def _wants_streaming_llm(payload: dict[str, Any]) -> bool:
+    """Agora CAE envia stream=true; sem SSE estilo OpenAI o motor marca llm failure e fala failure_message."""
+    return bool(payload.get("stream"))
+
+
+async def _openai_chat_completion_sse(
+    content: str,
+    model: str = "local-scheduler-agent",
+    include_usage: bool = False,
+):
+    """Gera linhas data: ... no formato chat.completion.chunk (OpenAI)."""
+    cid = f"chatcmpl-{int(time.time())}"
+    created = int(time.time())
+    base: dict[str, Any] = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model}
+    chunks: list[dict[str, Any]] = [
+        {**base, "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}]},
+        {**base, "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": None}]},
+    ]
+    final: dict[str, Any] = {**base, "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}]}
+    if include_usage:
+        final["usage"] = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    chunks.append(final)
+    for ch in chunks:
+        line = f"data: {json.dumps(ch, ensure_ascii=False)}\n\n"
+        yield line.encode("utf-8")
+    yield b"data: [DONE]\n\n"
 
 
 class CAEStartRequest(BaseModel):
@@ -193,6 +222,29 @@ async def cae_llm_callback(
             )
 
         elapsed_ms = (time.perf_counter() - t0) * 1000
+        stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+        include_usage = bool(stream_opts.get("include_usage"))
+
+        if _wants_streaming_llm(payload):
+            logger.info(
+                "CAE_LLM resposta modo STREAM (chat.completion.chunk + SSE); Agora enviou stream=true. "
+                "session_id=%s intent=%s response_len=%s include_usage=%s elapsed_ms=%.2f",
+                session_id,
+                result.intent,
+                len(out_text),
+                include_usage,
+                elapsed_ms,
+            )
+            return StreamingResponse(
+                _openai_chat_completion_sse(out_text, include_usage=include_usage),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         body_out = {
             "id": f"chatcmpl-{int(time.time())}",
             "object": "chat.completion",
@@ -207,8 +259,8 @@ async def cae_llm_callback(
             ],
         }
         logger.info(
-            "CAE_LLM POST sucesso session_id=%s intent=%s needs_confirmation=%s response_len=%s elapsed_ms=%.2f "
-            "body_out=%s",
+            "CAE_LLM POST sucesso (JSON nao-stream) session_id=%s intent=%s needs_confirmation=%s response_len=%s "
+            "elapsed_ms=%.2f body_out=%s",
             session_id,
             result.intent,
             result.needs_confirmation,
