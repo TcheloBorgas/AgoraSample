@@ -210,10 +210,33 @@ class CAEService:
                 **voice,
             }
 
+        # Em producao (ex.: Render) use sempre o callback FastAPI: o mesmo ConversationService do chat.
+        # Chamar Gemini diretamente a partir dos servidores Agora costuma falhar (payload/compat) e o CAE
+        # reproduz failure_message em voz ("Nao consegui obter resposta...").
+        pub = (settings.agora_cae_public_base_url or "").strip()
+        if pub:
+            callback_url = f"{pub.rstrip('/')}/api/cae/llm?session_id={session_id}"
+            return {
+                "vendor": "custom",
+                "style": "openai",
+                "url": callback_url,
+                "api_key": "",
+                "system_messages": [
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a voice meeting assistant connected to Google Calendar and session memory. "
+                            "Always confirm create/reschedule/cancel actions."
+                        ),
+                    }
+                ],
+                "params": {"model": "local-scheduler-agent"},
+                **voice,
+            }
+
         resolved = resolve_openai_compat_llm()
         if resolved:
             base_url, api_key, model = resolved
-            # Gemini OpenAI-compat: manter style openai na URL .../openai ; style gemini e para API nativa Gemini.
             return {
                 "vendor": "custom",
                 "style": "openai",
@@ -224,30 +247,10 @@ class CAEService:
                 **voice,
             }
 
-        if not settings.agora_cae_public_base_url:
-            raise RuntimeError(
-                "AGORA_CAE_PUBLIC_BASE_URL nao configurado. "
-                "Expose o backend com ngrok/cloudflared e defina a URL publica para callback do LLM."
-            )
-
-        callback_url = f"{settings.agora_cae_public_base_url.rstrip('/')}/api/cae/llm?session_id={session_id}"
-        return {
-            "vendor": "custom",
-            "style": "openai",
-            "url": callback_url,
-            "api_key": "",
-            "system_messages": [
-                {
-                    "role": "system",
-                    "content": (
-                        "You are a voice meeting assistant connected to Google Calendar and session memory. "
-                        "Always confirm create/reschedule/cancel actions."
-                    ),
-                }
-            ],
-            "params": {"model": "local-scheduler-agent"},
-            **voice,
-        }
+        raise RuntimeError(
+            "Defina AGORA_CAE_PUBLIC_BASE_URL com a URL publica deste backend (ex.: Render) para o LLM do CAE, "
+            "ou configure GEMINI_API_KEY / LLM_OPENAI_COMPAT_* para modo sem callback."
+        )
 
     def _build_tts_config(self, language: str) -> dict[str, Any]:
         vendor = settings.agora_cae_tts_vendor.lower()
