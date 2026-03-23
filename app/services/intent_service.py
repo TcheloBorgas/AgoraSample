@@ -1,3 +1,4 @@
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -7,8 +8,11 @@ from typing import Any
 from dateparser.search import search_dates
 from dateutil import parser as date_parser
 
+from app.adapters.intent_llm_classifier import classify_intent_sync, intent_classification_configured
 from app.core.config import settings
 from app.models.domain import MeetingDraft
+
+logger = logging.getLogger(__name__)
 
 
 def _fold_ascii_lower(s: str) -> str:
@@ -119,7 +123,15 @@ class IntentService:
         if self._is_confirm_no(lowered):
             return IntentResult(intent="confirm_no", entities={}, missing_fields=[])
 
-        intent = self._infer_intent(lowered)
+        if intent_classification_configured():
+            llm_intent: str | None = None
+            try:
+                llm_intent = classify_intent_sync(text, language)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("intent LLM falhou, usando heuristica: %s", exc)
+            intent = llm_intent if llm_intent else self._infer_intent(lowered)
+        else:
+            intent = self._infer_intent(lowered)
         entities = self._extract_entities(text, language, intent)
         missing_fields = self._required_fields(intent, entities)
         return IntentResult(intent=intent, entities=entities, missing_fields=missing_fields)

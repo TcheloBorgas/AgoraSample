@@ -42,6 +42,21 @@ def resolve_openai_compat_llm() -> tuple[str, str, str] | None:
     return None
 
 
+def resolve_intent_classification_llm() -> tuple[str, str, str] | None:
+    """
+    Credenciais para classificar intenções (chat/completions).
+    Ordem: LLM_OPENAI_COMPAT_* / GEMINI_* (via resolve_openai_compat_llm), senão a mesma chave
+    AGORA_CAE_TTS_OPENAI_KEY já usada para TTS OpenAI no CAE (api.openai.com + gpt-4o-mini).
+    """
+    r = resolve_openai_compat_llm()
+    if r:
+        return r
+    tts_key = (settings.agora_cae_tts_openai_key or "").strip()
+    if tts_key:
+        return "https://api.openai.com/v1", tts_key, "gpt-4o-mini"
+    return None
+
+
 class OpenAICompatibleLlmClient:
     """POST {base}/chat/completions com Bearer."""
 
