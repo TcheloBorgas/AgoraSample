@@ -41,7 +41,7 @@ class Settings(BaseSettings):
     agora_cae_external_llm_api_key: str = Field(default="", validation_alias="AGORA_CAE_EXTERNAL_LLM_API_KEY")
     agora_cae_external_llm_model: str = Field(default="", validation_alias="AGORA_CAE_EXTERNAL_LLM_MODEL")
     agora_cae_mcp_endpoint: str = Field(default="", validation_alias="AGORA_CAE_MCP_ENDPOINT")
-    agora_cae_tts_vendor: str = Field(default="microsoft", validation_alias="AGORA_CAE_TTS_VENDOR")
+    agora_cae_tts_vendor: str = Field(default="elevenlabs", validation_alias="AGORA_CAE_TTS_VENDOR")
     agora_cae_tts_azure_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_AZURE_KEY")
     agora_cae_tts_azure_region: str = Field(default="", validation_alias="AGORA_CAE_TTS_AZURE_REGION")
     agora_cae_tts_openai_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_OPENAI_KEY")
