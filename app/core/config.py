@@ -32,7 +32,8 @@ class Settings(BaseSettings):
     agora_uid: int = 0
     agora_cae_customer_id: str = Field(default="", validation_alias="AGORA_CAE_CUSTOMER_ID")
     agora_cae_customer_secret: str = Field(default="", validation_alias="AGORA_CAE_CUSTOMER_SECRET")
-    agora_cae_agent_uid: int = Field(default=10001, validation_alias="AGORA_CAE_AGENT_UID")
+    # Evitar colisao com AGORA_UID por defeito (10001): agente e utilizador nao podem partilhar o mesmo UID no RTC.
+    agora_cae_agent_uid: int = Field(default=20001, validation_alias="AGORA_CAE_AGENT_UID")
     agora_cae_agent_name_prefix: str = Field(default="assistant-cae", validation_alias="AGORA_CAE_AGENT_NAME_PREFIX")
     agora_cae_enable_tools: bool = Field(default=True, validation_alias="AGORA_CAE_ENABLE_TOOLS")
     agora_cae_public_base_url: str = Field(default="", validation_alias="AGORA_CAE_PUBLIC_BASE_URL")

@@ -95,7 +95,7 @@ class CAEService:
         language: str,
     ) -> dict[str, Any]:
         name = f"{settings.agora_cae_agent_name_prefix}-{session_id}-{int(time.time())}"
-        llm_config = self._build_llm_config(session_id)
+        llm_config = self._build_llm_config(session_id, language)
 
         # Token do browser e para AGORA_UID; o agente CAE entra com AGORA_CAE_AGENT_UID — precisa de token proprio.
         agent_token = build_rtc_token_for_uid(channel, int(settings.agora_cae_agent_uid))
@@ -171,11 +171,33 @@ class CAEService:
             "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
         }
 
-    def _build_llm_config(self, session_id: str) -> dict[str, Any]:
+    def _llm_voice_output_and_greeting(self, language: str) -> dict[str, Any]:
+        """
+        O CAE exige output_modalities explicito: ['text'] envia a resposta do LLM ao TTS e ao canal RTC.
+        Sem isto, o motor pode assumir outro modo e nunca publicar audio (browser nao recebe user-published).
+        """
+        if language.startswith("es"):
+            greet = "Hola, soy tu asistente de agenda. ¿En qué puedo ayudarte?"
+            fail = "No pude obtener respuesta del asistente en este momento. Intenta de nuevo."
+        elif language.startswith("pt"):
+            greet = "Olá, sou o assistente de agenda. Em que posso ajudar?"
+            fail = "Não consegui obter resposta do assistente agora. Tente de novo."
+        else:
+            greet = "Hi, I'm your scheduling assistant. How can I help?"
+            fail = "I couldn't get a response from the assistant right now. Please try again."
+        return {
+            "output_modalities": ["text"],
+            "greeting_configs": {"mode": "single_first"},
+            "greeting_message": greet,
+            "failure_message": fail,
+        }
+
+    def _build_llm_config(self, session_id: str, language: str) -> dict[str, Any]:
         sys_content = (
             "You are a bilingual scheduling assistant. Confirm critical actions before execution. "
             "Prefer concise, natural answers in user language."
         )
+        voice = self._llm_voice_output_and_greeting(language)
         if settings.agora_cae_external_llm_url.strip():
             model = (settings.agora_cae_external_llm_model or "").strip() or "gpt-4o-mini"
             return {
@@ -185,11 +207,13 @@ class CAEService:
                 "api_key": settings.agora_cae_external_llm_api_key.strip(),
                 "system_messages": [{"role": "system", "content": sys_content}],
                 "params": {"model": model},
+                **voice,
             }
 
         resolved = resolve_openai_compat_llm()
         if resolved:
             base_url, api_key, model = resolved
+            # Gemini OpenAI-compat: manter style openai na URL .../openai ; style gemini e para API nativa Gemini.
             return {
                 "vendor": "custom",
                 "style": "openai",
@@ -197,6 +221,7 @@ class CAEService:
                 "api_key": api_key,
                 "system_messages": [{"role": "system", "content": sys_content}],
                 "params": {"model": model},
+                **voice,
             }
 
         if not settings.agora_cae_public_base_url:
@@ -221,6 +246,7 @@ class CAEService:
                 }
             ],
             "params": {"model": "local-scheduler-agent"},
+            **voice,
         }
 
     def _build_tts_config(self, language: str) -> dict[str, Any]:

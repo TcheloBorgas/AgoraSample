@@ -514,6 +514,31 @@ function markCaeAgentAudioPublished(uid) {
   log(t("logCaeRemoteAudioOk").replace("%s", String(uid)));
 }
 
+/**
+ * Se o agente já publicou áudio antes do cliente tratar `user-published`, ou o evento falhou,
+ * tenta subscrever com base em `remoteUsers` (Web SDK 4.x).
+ */
+async function trySyncSubscribeCaeAgentAudio(agentUid) {
+  if (!agoraClient || agentUid == null) return;
+  try {
+    const remoteUsers = agoraClient.remoteUsers || [];
+    for (const user of remoteUsers) {
+      if (String(user.uid) !== String(agentUid)) continue;
+      if (!user.hasAudio) continue;
+      await agoraClient.subscribe(user, "audio");
+      if (user.audioTrack) {
+        markCaeAgentAudioPublished(user.uid);
+        const already = remoteAudioTracks.some((t) => t === user.audioTrack);
+        if (!already) remoteAudioTracks.push(user.audioTrack);
+        await playRemoteAudioTrack(user.audioTrack, user.uid);
+        log(`RTC: sync subscribe áudio do agente uid=${user.uid}`);
+      }
+    }
+  } catch (err) {
+    log(`RTC: sync subscribe: ${err?.message || err}`);
+  }
+}
+
 async function playRemoteAudioTrack(track, uid) {
   if (!track) return;
   try {
@@ -831,6 +856,9 @@ async function connectAgora() {
         log(t("logCaeActive"));
         log(t("logCaeSpeakHint"));
         scheduleCaeRemoteAudioWatchdog();
+        const uidForSync = expectedCaeAgentUid;
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 0);
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 1500);
       } else {
         log(t("logCaeFallback"));
         clearCaeRemoteAudioWatchdog();
