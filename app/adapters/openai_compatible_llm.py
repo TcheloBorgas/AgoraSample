@@ -44,16 +44,27 @@ def resolve_openai_compat_llm() -> tuple[str, str, str] | None:
 
 def resolve_intent_classification_llm() -> tuple[str, str, str] | None:
     """
-    Credenciais para classificar intenções (chat/completions).
-    Ordem: LLM_OPENAI_COMPAT_* / GEMINI_* (via resolve_openai_compat_llm), senão a mesma chave
-    AGORA_CAE_TTS_OPENAI_KEY já usada para TTS OpenAI no CAE (api.openai.com + gpt-4o-mini).
+    Credenciais só para classificar intenções (1 chamada extra por mensagem).
+
+    Ordem (evita esgotar quota Gemini quando GEMINI_* existe mas o TTS é ElevenLabs/OpenAI):
+    1) LLM_OPENAI_COMPAT_* completo
+    2) AGORA_CAE_TTS_OPENAI_KEY → chat gpt-4o-mini na API OpenAI (mesma conta do TTS OpenAI no CAE)
+    3) GEMINI_* por último (fallback; pode dar 429 em free tier com muito tráfego)
+
+    O diálogo principal (fallback unknown no ConversationService) continua a usar resolve_openai_compat_llm().
     """
-    r = resolve_openai_compat_llm()
-    if r:
-        return r
+    b = (settings.llm_openai_compat_base_url or "").strip().rstrip("/")
+    k = (settings.llm_openai_compat_api_key or "").strip()
+    m = (settings.llm_openai_compat_model or "").strip()
+    if b and k and m:
+        return b, k, m
     tts_key = (settings.agora_cae_tts_openai_key or "").strip()
     if tts_key:
         return "https://api.openai.com/v1", tts_key, "gpt-4o-mini"
+    gk = (settings.gemini_api_key or "").strip()
+    if gk:
+        gm = (settings.gemini_model or "gemini-2.0-flash").strip()
+        return _GEMINI_OPENAI_BASE, gk, gm
     return None
 
 

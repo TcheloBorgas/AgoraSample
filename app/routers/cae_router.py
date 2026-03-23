@@ -187,9 +187,35 @@ async def cae_llm_callback(
         )
 
         user_text = _extract_user_text(payload)
-        if not user_text:
-            user_text = "Continue em portugues com uma resposta curta."
-            logger.warning("CAE_LLM nenhum texto de user extraido; usando fallback curto.")
+        if not (user_text or "").strip():
+            # ASR vazio: não inventar frase que o classificador interpreta como mudança de idioma (ex.: "português" → set_language).
+            out_empty = "Não ouvi bem desta vez. Pode repetir em uma frase?"
+            logger.warning("CAE_LLM texto de user vazio (ASR); resposta fixa sem handle_message.")
+            stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+            include_usage = bool(stream_opts.get("include_usage"))
+            if _wants_streaming_llm(payload):
+                return StreamingResponse(
+                    _openai_chat_completion_sse(out_empty, include_usage=include_usage),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            return {
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": "local-scheduler-agent",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": out_empty},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
 
         logger.info(
             "CAE_LLM user_text len=%s preview=%r",
