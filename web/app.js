@@ -13,8 +13,7 @@ let caeRemoteAudioWatchdogTimer = null;
 let remoteAudioTracks = [];
 /** Último RemoteAudioTrack por uid — ao republicar áudio, parar o anterior evita sobreposição / som «travado». */
 let lastRemoteAudioTrackByUid = new Map();
-/** Evita `play()` duplicado se o SDK repetir `user-published` para o mesmo track. */
-let lastRemoteAudioKeyByUid = new Map();
+/** Evita `play()` duplicado se o SDK repetir `user-published` para a mesma instância de track (referência). */
 let agoraAutoplayHooked = false;
 
 /**
@@ -69,18 +68,6 @@ function scheduleApplyRemoteUserAudio(uidStr) {
   cancelRemoteAudioPublishDebounce(uidStr);
   const timerId = setTimeout(run, REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS);
   remoteAudioPublishDebounceTimers.set(uidStr, timerId);
-}
-
-function getRemoteAudioTrackKey(track) {
-  if (!track) return "";
-  if (typeof track.getTrackId === "function") {
-    try {
-      return String(track.getTrackId());
-    } catch (_e) {
-      /* ignora */
-    }
-  }
-  return String(track);
 }
 
 function stopRemoteAudioTrackIfAny(track) {
@@ -622,8 +609,9 @@ async function trySyncSubscribeCaeAgentAudio(agentUid) {
   }
 }
 
+/** @returns {Promise<boolean>} */
 async function playRemoteAudioTrack(track, uid) {
-  if (!track) return;
+  if (!track) return false;
   try {
     try {
       if (typeof track.setVolume === "function") {
@@ -639,9 +627,11 @@ async function playRemoteAudioTrack(track, uid) {
     log(`${t("logRemoteAudio")} (uid=${uid}).`);
     log(t("logCaeTtsPlaying"));
     hideAudioUnlockBar();
+    return true;
   } catch (err) {
     log(`${t("logAudioPlayFailed")}: ${err?.message || err}`);
     showAudioUnlockBar();
+    return false;
   }
 }
 
@@ -660,21 +650,23 @@ async function applyRemoteUserAudioPublished(uidStr) {
     log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
     return;
   }
-  const key = getRemoteAudioTrackKey(user.audioTrack);
-  if (lastRemoteAudioKeyByUid.get(uidStr) === key) {
+  const track = user.audioTrack;
+  if (lastRemoteAudioTrackByUid.get(uidStr) === track) {
     return;
   }
-  lastRemoteAudioKeyByUid.set(uidStr, key);
   markCaeAgentAudioPublished(user.uid);
   const prev = lastRemoteAudioTrackByUid.get(uidStr);
-  if (prev && prev !== user.audioTrack) {
+  if (prev && prev !== track) {
     stopRemoteAudioTrackIfAny(prev);
   }
-  lastRemoteAudioTrackByUid.set(uidStr, user.audioTrack);
-  if (!remoteAudioTracks.some((tr) => tr === user.audioTrack)) {
-    remoteAudioTracks.push(user.audioTrack);
+  lastRemoteAudioTrackByUid.set(uidStr, track);
+  if (!remoteAudioTracks.some((tr) => tr === track)) {
+    remoteAudioTracks.push(track);
   }
-  await playRemoteAudioTrack(user.audioTrack, user.uid);
+  const playedOk = await playRemoteAudioTrack(track, user.uid);
+  if (!playedOk) {
+    lastRemoteAudioTrackByUid.delete(uidStr);
+  }
 }
 
 async function resumeAllRemoteAudio() {
@@ -901,7 +893,6 @@ async function connectAgora() {
   setupAgoraAutoplayHook();
   remoteAudioTracks = [];
   lastRemoteAudioTrackByUid.clear();
-  lastRemoteAudioKeyByUid.clear();
   clearRemoteAudioPublishDebouncers();
   resetCaeRemoteAudioState();
 
@@ -940,7 +931,6 @@ async function connectAgora() {
       const uidStr = String(user.uid);
       remoteAudioPublishBurstStartTs.delete(uidStr);
       log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
-      lastRemoteAudioKeyByUid.delete(uidStr);
       lastRemoteAudioTrackByUid.delete(uidStr);
       pruneRemoteAudioTracksFromClient();
     });
