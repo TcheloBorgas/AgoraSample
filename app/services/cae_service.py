@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -28,6 +29,12 @@ class CAEService:
     def __init__(self, client: AgoraConversationalAIClient) -> None:
         self.client = client
         self._sessions: dict[str, AgentSession] = {}
+        self._start_locks: dict[str, asyncio.Lock] = {}
+
+    def _lock_for_session(self, session_id: str) -> asyncio.Lock:
+        if session_id not in self._start_locks:
+            self._start_locks[session_id] = asyncio.Lock()
+        return self._start_locks[session_id]
 
     async def start_agent_for_session(
         self,
@@ -37,32 +44,37 @@ class CAEService:
         remote_uid: str,
         language: str = "pt-BR",
     ) -> AgentSession:
-        if session_id in self._sessions and self._sessions[session_id].status in {"RUNNING", "STARTING", "IDLE"}:
-            return self._sessions[session_id]
+        async with self._lock_for_session(session_id):
+            if session_id in self._sessions and self._sessions[session_id].status in {
+                "RUNNING",
+                "STARTING",
+                "IDLE",
+            }:
+                return self._sessions[session_id]
 
-        payload = self._build_join_payload(session_id, channel, token, remote_uid, language)
-        response = await self.client.start_agent(payload)
-        session = AgentSession(
-            session_id=session_id,
-            agent_id=response["agent_id"],
-            status=response.get("status", "STARTING"),
-            channel=channel,
-            remote_uid=remote_uid,
-            started_at=datetime.utcnow(),
-        )
-        self._sessions[session_id] = session
-        tts_pub = self.describe_tts_public(language)
-        logger.info(
-            "CAE agente iniciado: a voz do agente no canal RTC vem do TTS configurado no CAE (Agora Conversational AI), "
-            "nao do backend FastAPI. session_id=%s agent_id=%s channel=%s remote_uid=%s agent_rtc_uid=%s tts=%s",
-            session_id,
-            session.agent_id,
-            channel,
-            remote_uid,
-            settings.agora_cae_agent_uid,
-            tts_pub,
-        )
-        return session
+            payload = self._build_join_payload(session_id, channel, token, remote_uid, language)
+            response = await self.client.start_agent(payload)
+            session = AgentSession(
+                session_id=session_id,
+                agent_id=response["agent_id"],
+                status=response.get("status", "STARTING"),
+                channel=channel,
+                remote_uid=remote_uid,
+                started_at=datetime.utcnow(),
+            )
+            self._sessions[session_id] = session
+            tts_pub = self.describe_tts_public(language)
+            logger.info(
+                "CAE agente iniciado: a voz do agente no canal RTC vem do TTS configurado no CAE (Agora Conversational AI), "
+                "nao do backend FastAPI. session_id=%s agent_id=%s channel=%s remote_uid=%s agent_rtc_uid=%s tts=%s",
+                session_id,
+                session.agent_id,
+                channel,
+                remote_uid,
+                settings.agora_cae_agent_uid,
+                tts_pub,
+            )
+            return session
 
     async def stop_agent_for_session(self, session_id: str) -> dict[str, Any]:
         session = self._sessions.get(session_id)

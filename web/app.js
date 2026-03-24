@@ -232,7 +232,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE ativo: captura local para STT no chat; o CAE ouve só enquanto o botão de voz está ligado (áudio RTC publicado).",
     logCaeFallback:
-      "Erro: o agente CAE (Agora Conversational AI) não iniciou ou falhou. Chat/STT local pode continuar, mas não há TTS do CAE no RTC até o start corrigir.",
+      "O agente de voz CAE não entrou no canal (falha no join na Agora). Se os logs do servidor mostram HTTP 429 ou «vendor capacity», é fila/capacidade do TTS — tente «Conectar Agora» de novo mais tarde ou mude AGORA_CAE_TTS_VENDOR. O chat por texto continua a funcionar.",
     logCaeRemoteAudioOk:
       "RTC: primeiro áudio publicado pelo agente CAE (uid=%s) — o browser deve reproduzir (ou pedir «Ativar áudio»).",
     logCaeNoRemoteAudioDiagnostic:
@@ -328,7 +328,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE active: local capture for chat STT; CAE listens only while the voice button is on.",
     logCaeFallback:
-      "Error: CAE (Agora Conversational AI) did not start or failed. Local chat/STT may continue; CAE TTS on RTC is unavailable until start succeeds.",
+      "Voice agent CAE did not join the channel (Agora join failed). If server logs show HTTP 429 or «vendor capacity», the TTS queue is saturated — try «Connect Agora» again later or change AGORA_CAE_TTS_VENDOR. Text chat still works.",
     logCaeRemoteAudioOk:
       "RTC: first remote audio published by CAE agent (uid=%s) — browser should play (or use «Enable agent audio»).",
     logCaeNoRemoteAudioDiagnostic:
@@ -424,7 +424,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE activo: captura local para STT; el CAE escucha solo mientras el botón de voz está activo.",
     logCaeFallback:
-      "Error: el agente CAE no se inició o falló. El chat/STT local puede seguir; no hay TTS del CAE en RTC hasta corregir el arranque.",
+      "El agente de voz CAE no entró al canal (falló el join en Agora). Si en el servidor ves HTTP 429 o «vendor capacity», hay cola/capacidad del TTS — prueba «Conectar Agora» más tarde o cambia AGORA_CAE_TTS_VENDOR. El chat por texto sigue funcionando.",
     logCaeRemoteAudioOk:
       "RTC: primer audio publicado por el agente CAE (uid=%s).",
     logCaeNoRemoteAudioDiagnostic:
@@ -1065,7 +1065,7 @@ async function startCaeAgent(sessionId, channel, token, remoteUid) {
         language: getBackendLangFromUi(),
       }),
     },
-    90000,
+    240000,
   );
   const text = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
@@ -1203,7 +1203,7 @@ async function connectAgora() {
       } catch (e) {
         if (e && e.name === "AbortError") {
           throw new Error(
-            "CAE: tempo limite (90s) ao iniciar o agente. A API Agora ou o backend pode estar lenta; tente de novo.",
+            "CAE: tempo limite (4 min) ao iniciar o agente — a API Agora pode estar com fila (429/capacidade). Desligue e volte a «Conectar Agora».",
           );
         }
         throw e;
