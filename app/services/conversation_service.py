@@ -97,6 +97,7 @@ class ConversationService:
                 intent_result = resumed
         if intent_result.intent in {"list_meetings", "reschedule_meeting", "cancel_meeting", "set_language", "repeat_last_meeting"}:
             state.meeting_draft = None
+            state.slot_fill_voice_hint_shown = False
         if intent_result.intent == "create_meeting":
             merged = self.intents.merge_meeting_draft(state.meeting_draft, intent_result.entities)
             merged = self.intents.fill_first_missing_create_slot(
@@ -240,7 +241,12 @@ class ConversationService:
                     status="warning",
                     data={"missing_fields": missing},
                 )
-                text = self.fallback.misplaced_confirm_yes_during_booking(missing, reply_lang)
+                show_voice = len(missing) > 1 and not state.slot_fill_voice_hint_shown
+                text = self.fallback.misplaced_confirm_yes_during_booking(
+                    missing, reply_lang, include_voice_step_hint=show_voice
+                )
+                if show_voice:
+                    state.slot_fill_voice_hint_shown = True
                 response = self._build_response(state, "create_meeting", text, False, False, response_language=reply_lang)
             else:
                 response = self._reparse_as_new_intent(
@@ -372,7 +378,12 @@ class ConversationService:
             return self._build_response(state, "set_language", text, False, True, response_language=lang)
 
         if missing_fields:
-            text = self.fallback.clarify_missing(intent, missing_fields, reply_lang)
+            show_voice = len(missing_fields) > 1 and not state.slot_fill_voice_hint_shown
+            text = self.fallback.clarify_missing(
+                intent, missing_fields, reply_lang, include_voice_step_hint=show_voice
+            )
+            if show_voice:
+                state.slot_fill_voice_hint_shown = True
             self.trace_service.step(trace, "validate_context", "Missing required fields for action.", status="warning", data={"missing_fields": missing_fields})
             return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
@@ -437,6 +448,7 @@ class ConversationService:
                 }
                 state.pending_confirmation = {"action": "create", "payload": payload}
                 state.meeting_draft = None
+                state.slot_fill_voice_hint_shown = False
                 text = self.language.in_language(
                     self._pt_create_confirm(payload),
                     self._en_create_confirm(payload),
@@ -627,6 +639,7 @@ class ConversationService:
         if detected_intent == "confirm_no":
             state.pending_confirmation = None
             state.meeting_draft = None
+            state.slot_fill_voice_hint_shown = False
             text = self.language.in_language(
                 "Sem problemas, operacao cancelada.",
                 "No problem, operation canceled.",

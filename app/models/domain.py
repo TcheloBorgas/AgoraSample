@@ -37,5 +37,9 @@ class ConversationState(BaseModel):
     short_memory: list[dict] = Field(default_factory=list)
     pending_confirmation: dict | None = None
     meeting_draft: MeetingDraft | None = None
+    slot_fill_voice_hint_shown: bool = Field(
+        default=False,
+        description="Evita repetir o aviso de «uma pergunta de cada vez» em cada turno do mesmo rascunho.",
+    )
     last_intent: IntentName = "unknown"
     updated_at: datetime = Field(default_factory=datetime.utcnow)

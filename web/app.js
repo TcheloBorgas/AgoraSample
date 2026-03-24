@@ -259,7 +259,7 @@ const UI_TEXTS = {
     brandText: "Voice Scheduling System",
     portfolioTopLink: "View my portfolio",
     heroEyebrow: "Real-time Conversational Agent",
-    heroTitleMain: "Converse naturally.",
+    heroTitleMain: "Talk naturally.",
     heroTitleGrad: "Schedule confidently.",
     heroCopy: "Product-grade interface for voice + chat with streaming, operational context and scheduling intelligence.",
     portfolioInfoTitle: "More information",

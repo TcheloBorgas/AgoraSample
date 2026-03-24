@@ -38,7 +38,14 @@ def _step_by_step_prefix(language: str) -> str:
 
 
 class FallbackService:
-    def clarify_missing(self, intent: str, missing_fields: list[str], language: str) -> str:
+    def clarify_missing(
+        self,
+        intent: str,
+        missing_fields: list[str],
+        language: str,
+        *,
+        include_voice_step_hint: bool = True,
+    ) -> str:
         fields = [f for f in (missing_fields or []) if f]
         if not fields:
             if language == "es":
@@ -48,7 +55,7 @@ class FallbackService:
             return "Pode detalhar um pouco mais o que deseja fazer com esta reunião?"
 
         f0 = _first_missing_slot(fields, intent)
-        prefix = _step_by_step_prefix(language) if len(fields) > 1 else ""
+        prefix = _step_by_step_prefix(language) if len(fields) > 1 and include_voice_step_hint else ""
         if language == "es":
             if f0 == "organizer_name":
                 return prefix + "Para agendar con claridad, ¿cuál es tu nombre completo?"
@@ -105,9 +112,20 @@ class FallbackService:
             return prefix + "Certo. Para qual novo horário você deseja reagendar?"
         return prefix + "Pode me explicar um pouco melhor o que você deseja fazer com essa reunião?"
 
-    def misplaced_confirm_yes_during_booking(self, missing_fields: list[str], language: str) -> str:
+    def misplaced_confirm_yes_during_booking(
+        self,
+        missing_fields: list[str],
+        language: str,
+        *,
+        include_voice_step_hint: bool = True,
+    ) -> str:
         """Utilizador disse 'sim' mas ainda faltam dados do rascunho — pedir o que falta, sem tratar como erro grosseiro."""
-        next_q = self.clarify_missing("create_meeting", missing_fields, language)
+        next_q = self.clarify_missing(
+            "create_meeting",
+            missing_fields,
+            language,
+            include_voice_step_hint=include_voice_step_hint,
+        )
         if language == "es":
             hint = (
                 "Aún no hay confirmación en el calendario: primero terminemos los datos, uno por uno. "
