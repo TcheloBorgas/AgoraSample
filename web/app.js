@@ -636,25 +636,39 @@ async function playRemoteAudioTrack(track, uid) {
 }
 
 /**
- * Aplica subscribe + play uma vez, com user atual de `remoteUsers` (após debounce).
- * Evita fechar sobre eventos stale quando o SDK dispara mute/unmute em sequência.
+ * Aplica subscribe + play uma vez (Web SDK 4.x: `audioTrack` só existe de forma fiável **depois** de `subscribe`).
+ * Independente do TTS do CAE (ElevenLabs / OpenAI / Azure) — o browser só recebe áudio remoto RTC.
+ * Debounce externo suaviza rajadas de `user-published`.
  */
 async function applyRemoteUserAudioPublished(uidStr) {
   if (!agoraClient) return;
   const users = agoraClient.remoteUsers || [];
   const user = users.find((u) => String(u.uid) === uidStr);
-  if (!user || !user.hasAudio || !user.audioTrack) return;
+  if (!user || !user.hasAudio) return;
   try {
     await agoraClient.subscribe(user, "audio");
   } catch (subErr) {
     log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
     return;
   }
-  const track = user.audioTrack;
+  const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
+  const delaysMs = [0, 50, 100, 150];
+  let remote = pickUser();
+  let track = remote?.audioTrack ?? user.audioTrack;
+  for (let i = 0; !track && i < delaysMs.length; i += 1) {
+    await new Promise((r) => setTimeout(r, delaysMs[i]));
+    remote = pickUser();
+    track = remote?.audioTrack ?? user.audioTrack;
+  }
+  if (!track) {
+    log(`RTC: subscribe OK mas audioTrack ainda ausente (uid=${uidStr}).`);
+    return;
+  }
+  const uidForPlay = remote?.uid ?? user.uid;
   if (lastRemoteAudioTrackByUid.get(uidStr) === track) {
     return;
   }
-  markCaeAgentAudioPublished(user.uid);
+  markCaeAgentAudioPublished(uidForPlay);
   const prev = lastRemoteAudioTrackByUid.get(uidStr);
   if (prev && prev !== track) {
     stopRemoteAudioTrackIfAny(prev);
@@ -663,7 +677,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
   if (!remoteAudioTracks.some((tr) => tr === track)) {
     remoteAudioTracks.push(track);
   }
-  const playedOk = await playRemoteAudioTrack(track, user.uid);
+  const playedOk = await playRemoteAudioTrack(track, uidForPlay);
   if (!playedOk) {
     lastRemoteAudioTrackByUid.delete(uidStr);
   }
