@@ -119,7 +119,16 @@ class CAEService:
 
         tts_cfg = self._build_tts_config(language)
         tts_vendor = (tts_cfg.get("vendor") or "").lower()
-        if tts_vendor == "elevenlabs":
+        if tts_vendor == "openai":
+            p = tts_cfg.get("params") or {}
+            oa_ok = bool((p.get("api_key") or "").strip())
+            logger.info(
+                "CAE join OpenAI TTS: model=%s voice=%s key_configurada=%s (docs Agora: base_url + api_key no join).",
+                p.get("model"),
+                p.get("voice"),
+                oa_ok,
+            )
+        elif tts_vendor == "elevenlabs":
             el_key_ok = bool((settings.agora_cae_tts_elevenlabs_key or "").strip())
             logger.info(
                 "CAE join ElevenLabs: voice_id=%s model_id=%s sample_rate=24000 key_configurada=%s "
@@ -129,7 +138,7 @@ class CAEService:
                 el_key_ok,
             )
         else:
-            logger.info("CAE join TTS vendor=%s (sem detalhe ElevenLabs).", tts_vendor)
+            logger.info("CAE join TTS vendor=%s.", tts_vendor)
         logger.info(
             "CAE join properties.tts efectivo (sem segredos): %s",
             self._tts_config_to_public(tts_cfg),
@@ -199,21 +208,18 @@ class CAEService:
         vendor = (tts_cfg.get("vendor") or "").lower()
         p = tts_cfg.get("params") or {}
         out: dict[str, Any] = {"pipeline": "cae_tts", "vendor": vendor}
-        # if vendor == "openai":
-        #     out["model"] = p.get("model")
-        #     out["voice"] = p.get("voice")
-        if vendor == "elevenlabs":
+        if vendor == "openai":
+            out["model"] = p.get("model")
+            out["voice"] = p.get("voice")
+        elif vendor == "elevenlabs":
             out["model_id"] = p.get("model_id")
             out["voice_id"] = p.get("voice_id")
-        # elif vendor == "microsoft":
-        #     out["region"] = p.get("region")
-        #     out["voice_name"] = p.get("voice_name")
         return out
 
     def describe_tts_public(self, language: str) -> dict[str, Any]:
         """
         Resumo seguro alinhado com o bloco real `properties.tts` enviado ao CAE.
-        Genero/timbre da voz vem do `voice_id` ElevenLabs (AGORA_CAE_TTS_ELEVENLABS_VOICE_ID), nao do sintetizador do FastAPI.
+        Resumo alinhado com o join: ElevenLabs (voice_id) ou OpenAI TTS (model/voice).
         """
         try:
             cfg = self._build_tts_config(language)
@@ -304,15 +310,28 @@ class CAEService:
 
     def _build_tts_config(self, language: str) -> dict[str, Any]:
         """
-        TTS do agente CAE: apenas ElevenLabs (voz = AGORA_CAE_TTS_ELEVENLABS_VOICE_ID no modelo ElevenLabs).
-        Caminhos OpenAI/Azure foram desativados para evitar voz por defeito feminina (ex.: Microsoft) ou mistura de vendors.
+        TTS do agente CAE no join: `openai` ou `elevenlabs` (formato params conforme docs Agora Conversational AI).
         """
         vendor = settings.agora_cae_tts_vendor.lower().strip()
 
-        # if vendor == "openai":
-        #     if not settings.agora_cae_tts_openai_key.strip():
-        #         raise RuntimeError(...)
-        #     return {"vendor": "openai", "params": {...}}
+        if vendor == "openai":
+            api_key = (settings.agora_cae_tts_openai_key or "").strip()
+            if not api_key:
+                raise RuntimeError(
+                    "AGORA_CAE_TTS_OPENAI_KEY nao configurado. Necessario para AGORA_CAE_TTS_VENDOR=openai."
+                )
+            model = (settings.agora_cae_tts_openai_model or "").strip() or "gpt-4o-mini-tts"
+            voice = (settings.agora_cae_tts_openai_voice or "").strip() or "coral"
+            return {
+                "vendor": "openai",
+                "params": {
+                    "base_url": "https://api.openai.com/v1",
+                    "api_key": api_key,
+                    "model": model,
+                    "voice": voice,
+                    "speed": 1,
+                },
+            }
 
         if vendor == "elevenlabs":
             el_key = (settings.agora_cae_tts_elevenlabs_key or "").strip()
@@ -329,12 +348,8 @@ class CAEService:
                 },
             }
 
-        # if vendor == "microsoft":
-        #     if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
-        #         raise RuntimeError(...)
-        #     return {"vendor": "microsoft", "params": {...}}
-
         raise RuntimeError(
-            "AGORA_CAE_TTS_VENDOR deve ser 'elevenlabs' (unico suportado neste projeto). "
-            "Defina AGORA_CAE_TTS_ELEVENLABS_KEY e AGORA_CAE_TTS_ELEVENLABS_VOICE_ID no Render."
+            "AGORA_CAE_TTS_VENDOR deve ser 'openai' ou 'elevenlabs'. "
+            "OpenAI: AGORA_CAE_TTS_OPENAI_KEY (+ opcional MODEL/VOICE). "
+            "ElevenLabs: AGORA_CAE_TTS_ELEVENLABS_KEY e AGORA_CAE_TTS_ELEVENLABS_VOICE_ID."
         )
