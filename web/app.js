@@ -17,15 +17,23 @@ let lastRemoteAudioTrackByUid = new Map();
 let lastRemoteAudioKeyByUid = new Map();
 let agoraAutoplayHooked = false;
 
-/** Debounce de áudio remoto: CAE/TTS alterna mute/unmute muito rápido — funde rajadas e evita centenas de subscribe/play. */
-const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 110;
+/**
+ * CAE/TTS dispara user-published em rajada; trailing debounce sozinho nunca «descansa» se o intervalo
+ * entre eventos for < DEBOUNCE_MS. MAX_WAIT_MS força pelo menos uma aplicação periódica.
+ * Não cancelar o timer em user-unpublished — senão o áudio nunca chega a tocar.
+ */
+const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 40;
+const REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS = 100;
 let remoteAudioPublishDebounceTimers = new Map();
+/** Primeiro user-published do burst (por uid), para max-wait. */
+let remoteAudioPublishBurstStartTs = new Map();
 
 function clearRemoteAudioPublishDebouncers() {
   for (const tid of remoteAudioPublishDebounceTimers.values()) {
     clearTimeout(tid);
   }
   remoteAudioPublishDebounceTimers.clear();
+  remoteAudioPublishBurstStartTs.clear();
 }
 
 function cancelRemoteAudioPublishDebounce(uidStr) {
@@ -34,6 +42,33 @@ function cancelRemoteAudioPublishDebounce(uidStr) {
     clearTimeout(tid);
     remoteAudioPublishDebounceTimers.delete(uidStr);
   }
+}
+
+function scheduleApplyRemoteUserAudio(uidStr) {
+  const now = Date.now();
+  if (!remoteAudioPublishBurstStartTs.has(uidStr)) {
+    remoteAudioPublishBurstStartTs.set(uidStr, now);
+  }
+  const burstStart = remoteAudioPublishBurstStartTs.get(uidStr);
+  const maxWaitElapsed = now - burstStart >= REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS;
+
+  const run = () => {
+    remoteAudioPublishDebounceTimers.delete(uidStr);
+    remoteAudioPublishBurstStartTs.delete(uidStr);
+    applyRemoteUserAudioPublished(uidStr).catch((err) => {
+      log(`RTC áudio remoto (debounce): ${err?.message || err}`);
+    });
+  };
+
+  if (maxWaitElapsed) {
+    cancelRemoteAudioPublishDebounce(uidStr);
+    run();
+    return;
+  }
+
+  cancelRemoteAudioPublishDebounce(uidStr);
+  const timerId = setTimeout(run, REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS);
+  remoteAudioPublishDebounceTimers.set(uidStr, timerId);
 }
 
 function getRemoteAudioTrackKey(track) {
@@ -903,7 +938,7 @@ async function connectAgora() {
     agoraClient.on("user-unpublished", (user, mediaType) => {
       if (mediaType !== "audio") return;
       const uidStr = String(user.uid);
-      cancelRemoteAudioPublishDebounce(uidStr);
+      remoteAudioPublishBurstStartTs.delete(uidStr);
       log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
       lastRemoteAudioKeyByUid.delete(uidStr);
       lastRemoteAudioTrackByUid.delete(uidStr);
@@ -917,15 +952,7 @@ async function connectAgora() {
         });
         return;
       }
-      const uidStr = String(user.uid);
-      cancelRemoteAudioPublishDebounce(uidStr);
-      const timerId = setTimeout(() => {
-        remoteAudioPublishDebounceTimers.delete(uidStr);
-        applyRemoteUserAudioPublished(uidStr).catch((err) => {
-          log(`RTC áudio remoto (debounce): ${err?.message || err}`);
-        });
-      }, REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS);
-      remoteAudioPublishDebounceTimers.set(uidStr, timerId);
+      scheduleApplyRemoteUserAudio(String(user.uid));
     });
     log(t("logAgoraStepJoin"));
     try {
