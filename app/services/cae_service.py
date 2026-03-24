@@ -182,8 +182,7 @@ class CAEService:
     def describe_tts_public(self, language: str) -> dict[str, Any]:
         """
         Resumo seguro alinhado com o bloco real `properties.tts` enviado ao CAE.
-        Se ouvir voz feminina em pt-BR e esperava ElevenLabs masculino, veja `vendor`:
-        microsoft usa pt-BR-FranciscaNeural (feminina) por defeito neste projeto.
+        Genero da voz vem do `voice_id` ElevenLabs (AGORA_CAE_TTS_ELEVENLABS_VOICE_ID), nao do backend FastAPI.
         """
         try:
             cfg = self._build_tts_config(language)
@@ -273,31 +272,16 @@ class CAEService:
         )
 
     def _build_tts_config(self, language: str) -> dict[str, Any]:
+        """
+        TTS do agente CAE: apenas ElevenLabs (voz = AGORA_CAE_TTS_ELEVENLABS_VOICE_ID no modelo ElevenLabs).
+        Caminhos OpenAI/Azure foram desativados para evitar voz por defeito feminina (ex.: Microsoft) ou mistura de vendors.
+        """
         vendor = settings.agora_cae_tts_vendor.lower().strip()
 
-        if vendor == "openai":
-            if not settings.agora_cae_tts_openai_key.strip():
-                raise RuntimeError(
-                    "AGORA_CAE_TTS_OPENAI_KEY nao configurado (voz do agente CAE). "
-                    "Crie uma chave em https://platform.openai.com/api-keys ou mude AGORA_CAE_TTS_VENDOR "
-                    "para microsoft e configure AGORA_CAE_TTS_AZURE_KEY / AGORA_CAE_TTS_AZURE_REGION. "
-                    "Nota: GEMINI_API_KEY cobre o LLM, mas nao substitui TTS OpenAI da Agora."
-                )
-            return {
-                "vendor": "openai",
-                "params": {
-                    "base_url": "https://api.openai.com/v1",
-                    "api_key": settings.agora_cae_tts_openai_key,
-                    "model": settings.agora_cae_tts_openai_model,
-                    "voice": settings.agora_cae_tts_openai_voice,
-                    "instructions": (
-                        "Speak in Brazilian Portuguese with a warm, professional tone."
-                        if language.startswith("pt")
-                        else "Speak in standard American English with a natural, friendly tone."
-                    ),
-                    "speed": 1,
-                },
-            }
+        # if vendor == "openai":
+        #     if not settings.agora_cae_tts_openai_key.strip():
+        #         raise RuntimeError(...)
+        #     return {"vendor": "openai", "params": {...}}
 
         if vendor == "elevenlabs":
             el_key = (settings.agora_cae_tts_elevenlabs_key or "").strip()
@@ -314,21 +298,12 @@ class CAEService:
                 },
             }
 
-        if vendor == "microsoft":
-            if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
-                raise RuntimeError(
-                    "AGORA_CAE_TTS_AZURE_KEY/AGORA_CAE_TTS_AZURE_REGION nao configurados. "
-                    "Configure credenciais Azure Speech ou troque AGORA_CAE_TTS_VENDOR para 'openai' ou 'elevenlabs'."
-                )
-            return {
-                "vendor": "microsoft",
-                "params": {
-                    "key": settings.agora_cae_tts_azure_key,
-                    "region": settings.agora_cae_tts_azure_region,
-                    "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
-                },
-            }
+        # if vendor == "microsoft":
+        #     if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
+        #         raise RuntimeError(...)
+        #     return {"vendor": "microsoft", "params": {...}}
 
         raise RuntimeError(
-            "AGORA_CAE_TTS_VENDOR invalido. Use apenas 'elevenlabs', 'openai' ou 'microsoft'."
+            "AGORA_CAE_TTS_VENDOR deve ser 'elevenlabs' (unico suportado neste projeto). "
+            "Defina AGORA_CAE_TTS_ELEVENLABS_KEY e AGORA_CAE_TTS_ELEVENLABS_VOICE_ID no Render."
         )

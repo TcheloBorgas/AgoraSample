@@ -1060,8 +1060,12 @@ async function connectAgora() {
   try {
     try {
       if (window.AgoraRTC && typeof AgoraRTC.setLogLevel === "function") {
-        // Reduz ruído no console do browser (prioriza WARNING/ERROR).
-        AgoraRTC.setLogLevel(1);
+        // 0 = NONE no SDK Web — corta o flood de Agora-SDK [DEBUG]/[INFO] no console.
+        const lv =
+          typeof AgoraRTC.LOG_LEVEL === "object" && AgoraRTC.LOG_LEVEL.NONE !== undefined
+            ? AgoraRTC.LOG_LEVEL.NONE
+            : 0;
+        AgoraRTC.setLogLevel(lv);
       }
     } catch (_e) {
       /* noop */

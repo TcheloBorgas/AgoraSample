@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import time
@@ -19,9 +20,12 @@ from app.adapters.ollama_client import OllamaClient
 
 router = APIRouter(prefix="/api/cae", tags=["cae"])
 logger = logging.getLogger(__name__)
-_LOG_THROTTLE_SEC = 2.0
+_LOG_THROTTLE_SEC = 4.0
 _last_log_by_key: dict[str, float] = {}
 _last_reply_by_session: dict[str, dict[str, Any]] = {}
+_cae_llm_locks: dict[str, asyncio.Lock] = {}
+# ASR do CAE pode enviar dezenas de milhares de caracteres (ruído + histórico); o LLM só precisa do fim do turno.
+CAE_USER_TEXT_MAX_CHARS = 4000
 
 _FAILURE_SNIPPETS_PT = (
     "não consegui obter resposta",
@@ -68,13 +72,39 @@ def _payload_turn_id(payload: dict[str, Any]) -> int | None:
         return None
 
 
-def _is_duplicate_turn(session_id: str, turn_id: int | None, user_text: str) -> bool:
+def _get_cae_llm_lock(session_id: str) -> asyncio.Lock:
+    if session_id not in _cae_llm_locks:
+        _cae_llm_locks[session_id] = asyncio.Lock()
+    return _cae_llm_locks[session_id]
+
+
+def _truncate_cae_user_text(user_text: str) -> str:
+    raw = (user_text or "").strip()
+    if len(raw) <= CAE_USER_TEXT_MAX_CHARS:
+        return raw
+    out = raw[-CAE_USER_TEXT_MAX_CHARS:]
+    if _should_emit_log("cae_user_text_truncated", window_sec=30.0):
+        logger.warning(
+            "CAE_LLM user_text truncado: len_original=%s -> len_usada=%s (mantido sufixo; ASR acumulou demasiado texto).",
+            len(raw),
+            len(out),
+        )
+    return out
+
+
+def _should_reuse_cached_turn_reply(session_id: str, turn_id: int | None) -> bool:
+    """
+    O Agora pode chamar o callback várias vezes para o mesmo turn_id (texto ASR a crescer).
+    Reutiliza a primeira resposta já gerada para esse turno para evitar repetir frases e flood no backend.
+    """
     if turn_id is None:
         return False
     prev = _last_reply_by_session.get(session_id)
     if not prev:
         return False
-    return prev.get("turn_id") == turn_id and (prev.get("user_text") or "") == (user_text or "")
+    if prev.get("turn_id") != turn_id:
+        return False
+    return bool((prev.get("out_text") or "").strip())
 
 
 def _remember_turn_reply(session_id: str, turn_id: int | None, user_text: str, out_text: str) -> None:
@@ -234,162 +264,162 @@ async def cae_llm_callback(
             )
             raise HTTPException(status_code=400, detail="Invalid JSON body") from je
 
-        if _should_emit_log(f"cae_llm_payload:{session_id}", window_sec=2.0):
+        if _should_emit_log(f"cae_llm_payload:{session_id}", window_sec=30.0):
             logger.info(
-                "CAE_LLM payload keys=%s body_len=%s payload_json=%s",
+                "CAE_LLM payload keys=%s body_len=%s turn_id=%s stream=%s",
                 list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
                 body_len,
-                _json_for_log(payload, max_len=3000),
+                payload.get("turn_id") if isinstance(payload, dict) else None,
+                payload.get("stream") if isinstance(payload, dict) else None,
             )
 
-        turn_id = _payload_turn_id(payload)
-        user_text = _extract_user_text(payload)
-        if _is_duplicate_turn(session_id, turn_id, user_text):
-            prev_text = (_last_reply_by_session.get(session_id) or {}).get("out_text") or ""
-            logger.info(
-                "CAE_LLM turn duplicado ignorado session_id=%s turn_id=%s len_user_text=%s",
-                session_id,
-                turn_id,
-                len(user_text or ""),
-            )
-            stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
-            include_usage = bool(stream_opts.get("include_usage"))
-            if _wants_streaming_llm(payload):
-                return StreamingResponse(
-                    _openai_chat_completion_sse(prev_text, include_usage=include_usage),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
+        async with _get_cae_llm_lock(session_id):
+            turn_id = _payload_turn_id(payload)
+            raw_user = _extract_user_text(payload)
+            user_text = _truncate_cae_user_text(raw_user)
+
+            if _should_reuse_cached_turn_reply(session_id, turn_id):
+                prev_text = (_last_reply_by_session.get(session_id) or {}).get("out_text") or ""
+                logger.debug(
+                    "CAE_LLM mesmo turn_id=%s — reutilizando resposta (evita repetir audio/LLM). session_id=%s len_user_text=%s",
+                    turn_id,
+                    session_id,
+                    len(user_text or ""),
                 )
-            return {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": "local-scheduler-agent",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": prev_text},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-        if not (user_text or "").strip():
-            # ASR vazio: não inventar frase que o classificador interpreta como mudança de idioma (ex.: "português" → set_language).
-            out_empty = "Não ouvi bem desta vez. Pode repetir em uma frase?"
-            logger.warning("CAE_LLM texto de user vazio (ASR); resposta fixa sem handle_message.")
-            stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
-            include_usage = bool(stream_opts.get("include_usage"))
-            if _wants_streaming_llm(payload):
-                _remember_turn_reply(session_id, turn_id, user_text, out_empty)
-                return StreamingResponse(
-                    _openai_chat_completion_sse(out_empty, include_usage=include_usage),
-                    media_type="text/event-stream",
-                    headers={
-                        "Cache-Control": "no-cache",
-                        "Connection": "keep-alive",
-                        "X-Accel-Buffering": "no",
-                    },
-                )
-            _remember_turn_reply(session_id, turn_id, user_text, out_empty)
-            return {
-                "id": f"chatcmpl-{int(time.time())}",
-                "object": "chat.completion",
-                "created": int(time.time()),
-                "model": "local-scheduler-agent",
-                "choices": [
-                    {
-                        "index": 0,
-                        "message": {"role": "assistant", "content": out_empty},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-
-        if _should_emit_log(f"cae_llm_user_text:{session_id}", window_sec=2.0):
-            logger.info(
-                "CAE_LLM user_text len=%s preview=%r",
-                len(user_text),
-                user_text[:500] + ("…" if len(user_text) > 500 else ""),
-            )
-
-        result = conversation.handle_message(
-            session_id=session_id,
-            user_id=user_id,
-            message=user_text,
-            use_cloud_fallback_for_unknown=False,
-            request_source="cae_llm",
-        )
-        out_text = (result.response_text or "").strip()
-        if not out_text:
-            logger.error(
-                "CAE_LLM response_text VAZIO apos handle_message intent=%s — Agora pode falhar ou falar mensagem de erro.",
-                result.intent,
-            )
-            out_text = (
-                "Desculpe, não consegui gerar uma resposta agora. Pode repetir em uma frase o que deseja?"
-            )
-
-        if _looks_like_cae_failure_tts(out_text):
-            logger.warning(
-                "CAE_LLM ATENCAO: response_text parece a mensagem de falha do CAE ou similar — "
-                "verifique se nao e eco do failure_message. preview=%r",
-                out_text[:300],
-            )
-
-        elapsed_ms = (time.perf_counter() - t0) * 1000
-        stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
-        include_usage = bool(stream_opts.get("include_usage"))
-
-        if _wants_streaming_llm(payload):
-            _remember_turn_reply(session_id, turn_id, user_text, out_text)
-            logger.info(
-                "CAE_LLM resposta modo STREAM (chat.completion.chunk + SSE); Agora enviou stream=true. "
-                "session_id=%s intent=%s response_len=%s include_usage=%s elapsed_ms=%.2f",
-                session_id,
-                result.intent,
-                len(out_text),
-                include_usage,
-                elapsed_ms,
-            )
-            return StreamingResponse(
-                _openai_chat_completion_sse(out_text, include_usage=include_usage),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "X-Accel-Buffering": "no",
-                },
-            )
-
-        body_out = {
-            "id": f"chatcmpl-{int(time.time())}",
-            "object": "chat.completion",
-            "created": int(time.time()),
-            "model": "local-scheduler-agent",
-            "choices": [
-                {
-                    "index": 0,
-                    "message": {"role": "assistant", "content": out_text},
-                    "finish_reason": "stop",
+                stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+                include_usage = bool(stream_opts.get("include_usage"))
+                if _wants_streaming_llm(payload):
+                    return StreamingResponse(
+                        _openai_chat_completion_sse(prev_text, include_usage=include_usage),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        },
+                    )
+                return {
+                    "id": f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": "local-scheduler-agent",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": prev_text},
+                            "finish_reason": "stop",
+                        }
+                    ],
                 }
-            ],
-        }
-        _remember_turn_reply(session_id, turn_id, user_text, out_text)
-        logger.info(
-            "CAE_LLM POST sucesso (JSON nao-stream) session_id=%s intent=%s needs_confirmation=%s response_len=%s "
-            "elapsed_ms=%.2f body_out=%s",
-            session_id,
-            result.intent,
-            result.needs_confirmation,
-            len(out_text),
-            elapsed_ms,
-            _json_for_log(body_out, max_len=4000),
-        )
-        return body_out
+            if not (user_text or "").strip():
+                # ASR vazio: não inventar frase que o classificador interpreta como mudança de idioma (ex.: "português" → set_language).
+                out_empty = "Não ouvi bem desta vez. Pode repetir em uma frase?"
+                if _should_emit_log(f"cae_llm_empty_asr:{session_id}", window_sec=15.0):
+                    logger.warning("CAE_LLM texto de user vazio (ASR); resposta fixa sem handle_message.")
+                stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+                include_usage = bool(stream_opts.get("include_usage"))
+                if _wants_streaming_llm(payload):
+                    return StreamingResponse(
+                        _openai_chat_completion_sse(out_empty, include_usage=include_usage),
+                        media_type="text/event-stream",
+                        headers={
+                            "Cache-Control": "no-cache",
+                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
+                        },
+                    )
+                return {
+                    "id": f"chatcmpl-{int(time.time())}",
+                    "object": "chat.completion",
+                    "created": int(time.time()),
+                    "model": "local-scheduler-agent",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {"role": "assistant", "content": out_empty},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                }
+
+            if _should_emit_log(f"cae_llm_user_text:{session_id}", window_sec=12.0):
+                logger.info(
+                    "CAE_LLM user_text len=%s preview=%r",
+                    len(user_text),
+                    user_text[:400] + ("…" if len(user_text) > 400 else ""),
+                )
+
+            result = conversation.handle_message(
+                session_id=session_id,
+                user_id=user_id,
+                message=user_text,
+                use_cloud_fallback_for_unknown=False,
+                request_source="cae_llm",
+            )
+            out_text = (result.response_text or "").strip()
+            if not out_text:
+                logger.error(
+                    "CAE_LLM response_text VAZIO apos handle_message intent=%s — Agora pode falhar ou falar mensagem de erro.",
+                    result.intent,
+                )
+                out_text = (
+                    "Desculpe, não consegui gerar uma resposta agora. Pode repetir em uma frase o que deseja?"
+                )
+
+            if _looks_like_cae_failure_tts(out_text):
+                logger.warning(
+                    "CAE_LLM ATENCAO: response_text parece a mensagem de falha do CAE ou similar — "
+                    "verifique se nao e eco do failure_message. preview=%r",
+                    out_text[:300],
+                )
+
+            elapsed_ms = (time.perf_counter() - t0) * 1000
+            stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+            include_usage = bool(stream_opts.get("include_usage"))
+
+            if _wants_streaming_llm(payload):
+                _remember_turn_reply(session_id, turn_id, user_text, out_text)
+                if _should_emit_log(f"cae_llm_stream_ok:{session_id}", window_sec=12.0):
+                    logger.info(
+                        "CAE_LLM STREAM ok session_id=%s intent=%s response_len=%s elapsed_ms=%.2f",
+                        session_id,
+                        result.intent,
+                        len(out_text),
+                        elapsed_ms,
+                    )
+                return StreamingResponse(
+                    _openai_chat_completion_sse(out_text, include_usage=include_usage),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+
+            body_out = {
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": "local-scheduler-agent",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": out_text},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+            _remember_turn_reply(session_id, turn_id, user_text, out_text)
+            if _should_emit_log(f"cae_llm_json_ok:{session_id}", window_sec=12.0):
+                logger.info(
+                    "CAE_LLM JSON ok session_id=%s intent=%s response_len=%s elapsed_ms=%.2f",
+                    session_id,
+                    result.intent,
+                    len(out_text),
+                    elapsed_ms,
+                )
+            return body_out
     except HTTPException:
         raise
     except Exception as exc:

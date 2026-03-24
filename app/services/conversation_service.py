@@ -73,14 +73,6 @@ class ConversationService:
         request_source: str = "http",
     ) -> AssistantResponse:
         start_ts = perf_counter()
-        if request_source == "cae_llm":
-            logger.info(
-                "CAE_LLM handle_message inicio session_id=%s user_id=%s use_cloud_fallback=%s msg_len=%s",
-                session_id,
-                user_id,
-                use_cloud_fallback_for_unknown,
-                len(message or ""),
-            )
         state = self.memory.get_session(session_id, user_id)
         trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=state.language)
 
@@ -294,27 +286,35 @@ class ConversationService:
 
         duration_ms = (perf_counter() - start_ts) * 1000
         metrics.observe("response_time_ms", duration_ms)
-        logger.info(
-            "Processed message",
-            extra={
-                "session_id": session_id,
-                "intent": response.intent,
-                "duration_ms": round(duration_ms, 2),
-                "request_source": request_source,
-            },
-        )
+        if request_source == "cae_llm":
+            logger.debug(
+                "Processed message",
+                extra={
+                    "session_id": session_id,
+                    "intent": response.intent,
+                    "duration_ms": round(duration_ms, 2),
+                    "request_source": request_source,
+                },
+            )
+        else:
+            logger.info(
+                "Processed message",
+                extra={
+                    "session_id": session_id,
+                    "intent": response.intent,
+                    "duration_ms": round(duration_ms, 2),
+                    "request_source": request_source,
+                },
+            )
         if request_source == "cae_llm":
             rt = (response.response_text or "").strip()
-            logger.info(
-                "CAE_LLM handle_message fim session_id=%s intent=%s needs_confirmation=%s action_executed=%s "
-                "response_len=%s duration_ms=%.2f response_preview=%r",
+            logger.debug(
+                "CAE_LLM handle_message fim session_id=%s intent=%s response_len=%s duration_ms=%.2f preview=%r",
                 session_id,
                 response.intent,
-                response.needs_confirmation,
-                response.action_executed,
                 len(rt),
                 duration_ms,
-                rt[:400] + ("…" if len(rt) > 400 else ""),
+                rt[:200] + ("…" if len(rt) > 200 else ""),
             )
         return response
 
