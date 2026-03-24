@@ -52,14 +52,25 @@ async def transcribe_audio(
 ):
     try:
         data = await file.read()
+        if len(data) < 800:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": "Áudio demasiado curto para transcrever. Grave pelo menos cerca de um segundo.",
+                    "reason": "too_short",
+                },
+            )
         text = stt.transcribe_wav(data, language_hint=language)
         return {"text": text, "language": language}
     except sr.UnknownValueError:
-        return {
-            "text": "Erro: o serviço de reconhecimento de voz não conseguiu extrair texto do áudio (sinal ilegível ou demasiado curto).",
-            "language": language,
-            "reason": "unintelligible",
-        }
+        # Não devolver 200 com texto de erro — o frontend tratava isso como mensagem do utilizador.
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Não foi possível extrair texto do áudio (sinal fraco, muito curto ou ruído). Tente falar mais perto do microfone ou use o teclado.",
+                "reason": "unintelligible",
+            },
+        ) from None
     except sr.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"Falha no provedor STT: {exc}") from exc
     except Exception as exc:  # noqa: BLE001

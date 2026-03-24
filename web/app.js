@@ -249,6 +249,7 @@ const UI_TEXTS = {
     errorPopupTitle: "Erro",
     errorPopupUnknown: "Ocorreu um erro sem mensagem detalhada.",
     errorPopupClose: "Fechar",
+    sttTooShort: "Gravação muito curta. Fale um pouco mais antes de soltar o botão de voz, ou escreva no chat.",
     errHtmlInsteadOfApi:
       "O servidor devolveu uma página HTML (como «Page not found» do Netlify) em vez da API JSON.\n\n" +
       "• Netlify: em Site → Environment variables crie SCHEDULER_API_BASE com a URL do FastAPI (ex.: https://seu-app.railway.app), sem barra no fim, e faça um deploy novo.\n" +
@@ -342,6 +343,7 @@ const UI_TEXTS = {
     errorPopupTitle: "Error",
     errorPopupUnknown: "An error occurred without a detailed message.",
     errorPopupClose: "Close",
+    sttTooShort: "Recording too short. Hold the voice button a bit longer, or type in the chat.",
     errHtmlInsteadOfApi:
       "The server returned an HTML page (e.g. Netlify «Page not found») instead of JSON.\n\n" +
       "• Netlify: Site → Environment variables → set SCHEDULER_API_BASE to your FastAPI public URL (no trailing slash), then redeploy.\n" +
@@ -435,6 +437,7 @@ const UI_TEXTS = {
     errorPopupTitle: "Error",
     errorPopupUnknown: "Ocurrió un error sin mensaje detallado.",
     errorPopupClose: "Cerrar",
+    sttTooShort: "Grabación demasiado corta. Mantén pulsado el botón de voz un poco más, o escribe en el chat.",
     errHtmlInsteadOfApi:
       "El servidor devolvió HTML (p. ej. «Page not found» de Netlify) en lugar de la API JSON.\n\n" +
       "• Netlify: Site → Environment variables → SCHEDULER_API_BASE = URL pública del FastAPI (sin barra final) y nuevo deploy.\n" +
@@ -473,6 +476,9 @@ function parseHttpErrorBody(text, status) {
     const j = JSON.parse(text);
     if (typeof j.detail === "string") return j.detail;
     if (Array.isArray(j.detail)) return j.detail.map((x) => (typeof x === "object" && x.msg) || JSON.stringify(x)).join("; ");
+    if (j.detail != null && typeof j.detail === "object" && typeof j.detail.message === "string") {
+      return j.detail.message;
+    }
     if (j.detail != null) return String(j.detail);
     if (j.message) return String(j.message);
   } catch (_e) {}
@@ -1405,7 +1411,8 @@ async function startRecording() {
       throw new Error(`${t("logMicError")}: ${err.message}`);
     }
     recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    recordingContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    // Não forçar 16 kHz: muitos browsers ignoram e usam ~48 kHz; o WAV tem de declarar a taxa real dos samples.
+    recordingContext = new (window.AudioContext || window.webkitAudioContext)();
     recordingSource = recordingContext.createMediaStreamSource(recordingStream);
     recordingNode = recordingContext.createScriptProcessor(4096, 1, 1);
     recordingChunks = [];
@@ -1442,8 +1449,10 @@ async function stopRecordingAndSend() {
       recordingStream.getTracks().forEach((track) => track.stop());
     } catch (_e) {}
   }
+  let recordedSampleRate = 48000;
   if (recordingContext) {
     try {
+      recordedSampleRate = recordingContext.sampleRate || 48000;
       await recordingContext.close();
     } catch (_e) {}
   }
@@ -1464,7 +1473,12 @@ async function stopRecordingAndSend() {
   });
 
   const pcm = floatTo16BitPCM(merged);
-  const wavBlob = encodeWav(pcm, 16000);
+  if (totalLength < (recordedSampleRate || 48000) * 0.35) {
+    setVoiceUiState("idle");
+    showErrorPopup(t("sttTooShort"), t("errorPopupTitle"));
+    return;
+  }
+  const wavBlob = encodeWav(pcm, recordedSampleRate);
   const stt = await transcribeRecordedAudio(wavBlob);
   const text = (stt.text || "").trim();
   if (!text) {
