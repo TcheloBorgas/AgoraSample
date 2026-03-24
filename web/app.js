@@ -31,6 +31,8 @@ let remoteAudioPublishBurstStartTs = new Map();
 let remoteAudioSubscribeInFlightByUid = new Map();
 let remoteAudioLastSubscribeAtByUid = new Map();
 const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
+const RTC_EVENT_LOG_THROTTLE_MS = 1500;
+const rtcAudioEventStatsByUid = new Map();
 
 function clearRemoteAudioPublishDebouncers() {
   for (const tid of remoteAudioPublishDebounceTimers.values()) {
@@ -40,6 +42,7 @@ function clearRemoteAudioPublishDebouncers() {
   remoteAudioPublishBurstStartTs.clear();
   remoteAudioSubscribeInFlightByUid.clear();
   remoteAudioLastSubscribeAtByUid.clear();
+  rtcAudioEventStatsByUid.clear();
 }
 
 function cancelRemoteAudioPublishDebounce(uidStr) {
@@ -48,6 +51,38 @@ function cancelRemoteAudioPublishDebounce(uidStr) {
     clearTimeout(tid);
     remoteAudioPublishDebounceTimers.delete(uidStr);
   }
+}
+
+function logRtcAudioEvent(uid, kind) {
+  const uidStr = String(uid);
+  const now = Date.now();
+  const stat = rtcAudioEventStatsByUid.get(uidStr) || {
+    published: 0,
+    unpublished: 0,
+    muteInfo: 0,
+    unmuteInfo: 0,
+    lastLogAt: 0,
+  };
+  if (kind === "published") stat.published += 1;
+  else if (kind === "unpublished") stat.unpublished += 1;
+  else if (kind === "mute-info") stat.muteInfo += 1;
+  else if (kind === "unmute-info") stat.unmuteInfo += 1;
+
+  if (now - stat.lastLogAt >= RTC_EVENT_LOG_THROTTLE_MS) {
+    const summary = [];
+    if (stat.published) summary.push(`published=${stat.published}`);
+    if (stat.unpublished) summary.push(`unpublished=${stat.unpublished}`);
+    if (stat.muteInfo || stat.unmuteInfo) summary.push(`info(mute=${stat.muteInfo}, unmute=${stat.unmuteInfo})`);
+    if (summary.length) {
+      log(`RTC uid=${uidStr} eventos (janela): ${summary.join(" ")}`);
+    }
+    stat.published = 0;
+    stat.unpublished = 0;
+    stat.muteInfo = 0;
+    stat.unmuteInfo = 0;
+    stat.lastLogAt = now;
+  }
+  rtcAudioEventStatsByUid.set(uidStr, stat);
 }
 
 function scheduleApplyRemoteUserAudio(uidStr) {
@@ -556,6 +591,18 @@ function hideAudioUnlockBar() {
   audioUnlockBarEl.classList.add("hidden");
 }
 
+function logCaeVoiceSource(caePayload) {
+  const tts = caePayload?.cae_tts || {};
+  const vendor = tts.vendor || "unknown";
+  const details = [];
+  if (tts.voice) details.push(`voice=${tts.voice}`);
+  if (tts.voice_id) details.push(`voice_id=${tts.voice_id}`);
+  if (tts.model) details.push(`model=${tts.model}`);
+  if (tts.model_id) details.push(`model_id=${tts.model_id}`);
+  if (tts.region) details.push(`region=${tts.region}`);
+  log(`Fonte da voz CAE no RTC: vendor=${vendor}${details.length ? ` (${details.join(", ")})` : ""}.`);
+}
+
 async function setRtcMicCaptureEnabled(enabled) {
   if (!localTrack || typeof localTrack.setEnabled !== "function") return;
   try {
@@ -968,6 +1015,14 @@ async function connectAgora() {
   connectAgoraBtnEl.disabled = true;
   const sessionId = sessionIdEl.value.trim();
   try {
+    try {
+      if (window.AgoraRTC && typeof AgoraRTC.setLogLevel === "function") {
+        // Reduz ruído no console do browser (DEBUG/INFO do SDK).
+        AgoraRTC.setLogLevel(2);
+      }
+    } catch (_e) {
+      /* noop */
+    }
     log(t("logAgoraStepSession"));
     let data;
     try {
@@ -997,6 +1052,14 @@ async function connectAgora() {
       /* ignore */
     }
     agoraClient.on("user-info-update", (uid, msg) => {
+      if (msg === "mute-audio") {
+        logRtcAudioEvent(uid, "mute-info");
+        return;
+      }
+      if (msg === "unmute-audio") {
+        logRtcAudioEvent(uid, "unmute-info");
+        return;
+      }
       log(`RTC user-info-update uid=${uid} msg=${msg}`);
     });
     agoraClient.on("user-joined", (user) => {
@@ -1006,20 +1069,20 @@ async function connectAgora() {
       if (mediaType !== "audio") return;
       const uidStr = String(user.uid);
       remoteAudioPublishBurstStartTs.delete(uidStr);
-      log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
+      logRtcAudioEvent(user.uid, "unpublished");
       lastRemoteAudioTrackByUid.delete(uidStr);
       remoteAudioLastSubscribeAtByUid.delete(uidStr);
       remoteAudioSubscribeInFlightByUid.delete(uidStr);
       pruneRemoteAudioTracksFromClient();
     });
     agoraClient.on("user-published", (user, mediaType) => {
-      log(`RTC user-published uid=${user.uid} mediaType=${mediaType}`);
       if (mediaType !== "audio") {
         agoraClient.subscribe(user, mediaType).catch((err) => {
           log(`RTC subscribe ${mediaType}: ${err?.message || err}`);
         });
         return;
       }
+      logRtcAudioEvent(user.uid, "published");
       scheduleApplyRemoteUserAudio(String(user.uid));
     });
     log(t("logAgoraStepJoin"));
@@ -1055,6 +1118,7 @@ async function connectAgora() {
       if (cae?.cae_tts) {
         log(`CAE TTS (backend): ${JSON.stringify(cae.cae_tts)}`);
       }
+      logCaeVoiceSource(cae);
       if (cae?.agent_rtc_uid != null && cae?.agent_rtc_uid !== undefined) {
         expectedCaeAgentUid = cae.agent_rtc_uid;
         log(`CAE agent_rtc_uid (backend): ${expectedCaeAgentUid}`);

@@ -314,16 +314,21 @@ class CAEService:
                 },
             }
 
-        if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
-            raise RuntimeError(
-                "AGORA_CAE_TTS_AZURE_KEY/AGORA_CAE_TTS_AZURE_REGION nao configurados. "
-                "Configure credenciais Azure Speech ou troque AGORA_CAE_TTS_VENDOR para 'openai' ou 'elevenlabs'."
-            )
-        return {
-            "vendor": "microsoft",
-            "params": {
-                "key": settings.agora_cae_tts_azure_key,
-                "region": settings.agora_cae_tts_azure_region,
-                "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
-            },
-        }
+        if vendor == "microsoft":
+            if not settings.agora_cae_tts_azure_key or not settings.agora_cae_tts_azure_region:
+                raise RuntimeError(
+                    "AGORA_CAE_TTS_AZURE_KEY/AGORA_CAE_TTS_AZURE_REGION nao configurados. "
+                    "Configure credenciais Azure Speech ou troque AGORA_CAE_TTS_VENDOR para 'openai' ou 'elevenlabs'."
+                )
+            return {
+                "vendor": "microsoft",
+                "params": {
+                    "key": settings.agora_cae_tts_azure_key,
+                    "region": settings.agora_cae_tts_azure_region,
+                    "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
+                },
+            }
+
+        raise RuntimeError(
+            "AGORA_CAE_TTS_VENDOR invalido. Use apenas 'elevenlabs', 'openai' ou 'microsoft'."
+        )

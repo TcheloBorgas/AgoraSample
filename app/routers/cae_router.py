@@ -19,6 +19,8 @@ from app.adapters.ollama_client import OllamaClient
 
 router = APIRouter(prefix="/api/cae", tags=["cae"])
 logger = logging.getLogger(__name__)
+_LOG_THROTTLE_SEC = 2.0
+_last_log_by_key: dict[str, float] = {}
 
 _FAILURE_SNIPPETS_PT = (
     "não consegui obter resposta",
@@ -41,6 +43,15 @@ def _json_for_log(obj: Any, max_len: int = 6000) -> str:
 def _looks_like_cae_failure_tts(text: str) -> bool:
     t = (text or "").lower()
     return any(x in t for x in _FAILURE_SNIPPETS_PT) or any(x in t for x in _FAILURE_SNIPPETS_EN)
+
+
+def _should_emit_log(key: str, window_sec: float = _LOG_THROTTLE_SEC) -> bool:
+    now = time.monotonic()
+    last = _last_log_by_key.get(key, 0.0)
+    if (now - last) >= window_sec:
+        _last_log_by_key[key] = now
+        return True
+    return False
 
 
 def _wants_streaming_llm(payload: dict[str, Any]) -> bool:
@@ -140,6 +151,22 @@ def get_cae_status(
     return service.get_session_status(session_id)
 
 
+@router.get("/agent/voice/source")
+def get_cae_voice_source(
+    language: str = Query("pt-BR"),
+    service: CAEService = Depends(get_cae_service),
+):
+    """
+    Diagnóstico rápido para confirmar a voz efetiva do pipeline CAE (vendor/model/voice).
+    """
+    tts_public = service.describe_tts_public(language)
+    return {
+        "language": language,
+        "configured_vendor_env": settings.agora_cae_tts_vendor,
+        "cae_tts": tts_public,
+    }
+
+
 @router.post("/llm")
 async def cae_llm_callback(
     request: Request,
@@ -155,16 +182,17 @@ async def cae_llm_callback(
     xff = request.headers.get("x-forwarded-for")
     xri = request.headers.get("x-request-id")
     ua = request.headers.get("user-agent", "")[:200]
-    logger.info(
-        "CAE_LLM POST inicio session_id=%r user_id=%r client=%s x_forwarded_for=%s "
-        "x_request_id=%s user_agent=%r",
-        session_id,
-        user_id,
-        client_host,
-        xff,
-        xri,
-        ua,
-    )
+    if _should_emit_log(f"cae_llm_start:{session_id}", window_sec=1.5):
+        logger.info(
+            "CAE_LLM POST inicio session_id=%r user_id=%r client=%s x_forwarded_for=%s "
+            "x_request_id=%s user_agent=%r",
+            session_id,
+            user_id,
+            client_host,
+            xff,
+            xri,
+            ua,
+        )
     try:
         raw_body = await request.body()
         body_len = len(raw_body)
@@ -179,12 +207,13 @@ async def cae_llm_callback(
             )
             raise HTTPException(status_code=400, detail="Invalid JSON body") from je
 
-        logger.info(
-            "CAE_LLM payload keys=%s body_len=%s payload_json=%s",
-            list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
-            body_len,
-            _json_for_log(payload, max_len=8000),
-        )
+        if _should_emit_log(f"cae_llm_payload:{session_id}", window_sec=2.0):
+            logger.info(
+                "CAE_LLM payload keys=%s body_len=%s payload_json=%s",
+                list(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
+                body_len,
+                _json_for_log(payload, max_len=3000),
+            )
 
         user_text = _extract_user_text(payload)
         if not (user_text or "").strip():
@@ -217,11 +246,12 @@ async def cae_llm_callback(
                 ],
             }
 
-        logger.info(
-            "CAE_LLM user_text len=%s preview=%r",
-            len(user_text),
-            user_text[:500] + ("…" if len(user_text) > 500 else ""),
-        )
+        if _should_emit_log(f"cae_llm_user_text:{session_id}", window_sec=2.0):
+            logger.info(
+                "CAE_LLM user_text len=%s preview=%r",
+                len(user_text),
+                user_text[:500] + ("…" if len(user_text) > 500 else ""),
+            )
 
         result = conversation.handle_message(
             session_id=session_id,

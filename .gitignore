@@ -30,3 +30,4 @@ Thumbs.db
 # Documentação local / notas de fluxo (não versionada)
 docs/
 .env.example
+*.example
