@@ -1,6 +1,6 @@
 # Blueprint Render: um único serviço Web com FastAPI + UI estática (app.main monta web/).
 # https://render.com/docs/blueprint-spec
-# Variáveis sensíveis (MONGO_URI, GEMINI_API_KEY, Agora, etc.) — definir no painel Render.
+# Variáveis sensíveis (MONGO_URI, chaves OpenAI/Agora, etc.) — definir no painel Render.
 
 services:
   - type: web

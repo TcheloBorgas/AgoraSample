@@ -1,4 +1,4 @@
-"""LLM via API estilo OpenAI (chat/completions): Gemini (1 chave), Groq, OpenRouter, etc."""
+"""LLM via API estilo OpenAI (chat/completions): OpenAI oficial, Groq, OpenRouter, etc."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ import httpx
 
 from app.core.config import settings
 
-_GEMINI_OPENAI_BASE = "https://generativelanguage.googleapis.com/v1beta/openai"
+_OPENAI_API_V1 = "https://api.openai.com/v1"
 
 
 def _scheduling_system_prompt(language: str) -> str:
@@ -28,17 +28,20 @@ def _scheduling_system_prompt(language: str) -> str:
     )
 
 
+def _openai_official_chat_model() -> str:
+    return (settings.openai_chat_model or "gpt-4o-mini").strip() or "gpt-4o-mini"
+
+
 def resolve_openai_compat_llm() -> tuple[str, str, str] | None:
-    """Retorna (base_url_sem_barra_final, api_key, model_id) ou None."""
+    """Retorna (base_url_sem_barra_final, api_key, model_id) ou None. Apenas APIs no formato OpenAI."""
     b = (settings.llm_openai_compat_base_url or "").strip().rstrip("/")
     k = (settings.llm_openai_compat_api_key or "").strip()
     m = (settings.llm_openai_compat_model or "").strip()
     if b and k and m:
         return b, k, m
-    gk = (settings.gemini_api_key or "").strip()
-    if gk:
-        gm = (settings.gemini_model or "gemini-2.0-flash").strip()
-        return _GEMINI_OPENAI_BASE, gk, gm
+    tts_key = (settings.agora_cae_tts_openai_key or "").strip()
+    if tts_key:
+        return _OPENAI_API_V1, tts_key, _openai_official_chat_model()
     return None
 
 
@@ -46,12 +49,8 @@ def resolve_intent_classification_llm() -> tuple[str, str, str] | None:
     """
     Credenciais só para classificar intenções (1 chamada extra por mensagem).
 
-    Ordem (evita esgotar quota Gemini quando GEMINI_* existe mas o TTS é ElevenLabs/OpenAI):
     1) LLM_OPENAI_COMPAT_* completo
-    2) AGORA_CAE_TTS_OPENAI_KEY → chat gpt-4o-mini na API OpenAI (mesma conta do TTS OpenAI no CAE)
-    3) GEMINI_* por último (fallback; pode dar 429 em free tier com muito tráfego)
-
-    O diálogo principal (fallback unknown no ConversationService) continua a usar resolve_openai_compat_llm().
+    2) AGORA_CAE_TTS_OPENAI_KEY → chat na API OpenAI (modelo OPENAI_CHAT_MODEL, por defeito gpt-4o-mini)
     """
     b = (settings.llm_openai_compat_base_url or "").strip().rstrip("/")
     k = (settings.llm_openai_compat_api_key or "").strip()
@@ -60,11 +59,7 @@ def resolve_intent_classification_llm() -> tuple[str, str, str] | None:
         return b, k, m
     tts_key = (settings.agora_cae_tts_openai_key or "").strip()
     if tts_key:
-        return "https://api.openai.com/v1", tts_key, "gpt-4o-mini"
-    gk = (settings.gemini_api_key or "").strip()
-    if gk:
-        gm = (settings.gemini_model or "gemini-2.0-flash").strip()
-        return _GEMINI_OPENAI_BASE, gk, gm
+        return _OPENAI_API_V1, tts_key, _openai_official_chat_model()
     return None
 
 

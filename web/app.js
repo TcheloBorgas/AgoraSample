@@ -24,11 +24,13 @@ let remoteAudioLastSubscribeAtByUid = new Map();
 let remoteAudioLastPlayAtByUid = new Map();
 /** Após INVALID_REMOTE_USER / «not published», não martelar o SDK durante este período. */
 let remoteAudioSubscribeBackoffUntilByUid = new Map();
-const REMOTE_AUDIO_INVALID_SUBSCRIBE_BACKOFF_MS = 400;
+const REMOTE_AUDIO_INVALID_SUBSCRIBE_BACKOFF_MS = 280;
 let remoteAudioLastInvalidSubscribeLogAtByUid = new Map();
 const REMOTE_AUDIO_INVALID_LOG_EVERY_MS = 4000;
-const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
-const REMOTE_AUDIO_MIN_REPLAY_INTERVAL_MS = 5000;
+/** Intervalo mínimo entre subscribes ao mesmo uid — baixo para reduzir latência perceptível do TTS CAE. */
+const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 180;
+/** Evita play() duplicado no mesmo track; não bloquear respostas novas do agente. */
+const REMOTE_AUDIO_MIN_REPLAY_INTERVAL_MS = 2200;
 const RTC_EVENT_LOG_THROTTLE_MS = 1500;
 const rtcAudioEventStatsByUid = new Map();
 
@@ -814,7 +816,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
-  const delaysMs = [0, 16, 48, 100, 200];
+  const delaysMs = [0, 4, 12, 28, 55];
   let remote = pickUser();
   let track = remote?.audioTrack ?? user.audioTrack;
   for (let i = 0; !track && i < delaysMs.length; i += 1) {
@@ -1225,8 +1227,8 @@ async function connectAgora() {
         scheduleCaeRemoteAudioWatchdog();
         const uidForSync = expectedCaeAgentUid;
         setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 0);
-        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 900);
-        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 2800);
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 380);
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 1100);
       } else {
         log(t("logCaeFallback"));
         clearCaeRemoteAudioWatchdog();

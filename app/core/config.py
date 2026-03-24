@@ -58,15 +58,13 @@ class Settings(BaseSettings):
     local_llm_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="LOCAL_LLM_BASE_URL")
     local_llm_model: str = Field(default="mistral", validation_alias="LOCAL_LLM_MODEL")
 
-    # API estilo OpenAI (Groq tier grátis, OpenRouter, Gemini compat, etc.) — usada no fallback de intenção unknown
+    # API estilo OpenAI (OpenAI oficial, Groq, OpenRouter, etc.) — fallback «unknown» e CAE sem callback público
     llm_openai_compat_base_url: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_BASE_URL")
     llm_openai_compat_api_key: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_API_KEY")
     llm_openai_compat_model: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_MODEL")
     llm_openai_compat_timeout_seconds: int = Field(default=60, validation_alias="LLM_OPENAI_COMPAT_TIMEOUT")
-
-    # Google AI Studio (grátis): uma chave ativa LLM OpenAI-compat quando Groq/OpenRouter não estão definidos
-    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
-    gemini_model: str = Field(default="gemini-2.0-flash", validation_alias="GEMINI_MODEL")
+    # Quando só existe AGORA_CAE_TTS_OPENAI_KEY: mesmo key para chat (classificação + unknown)
+    openai_chat_model: str = Field(default="gpt-4o-mini", validation_alias="OPENAI_CHAT_MODEL")
 
     short_term_memory_limit: int = 20
 

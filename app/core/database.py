@@ -14,7 +14,7 @@ from typing import Any
 
 from app.core.config import settings
 
-# --- MongoDB (desativado para deploy simples só com Gemini / sem Atlas) ---
+# --- MongoDB (desativado para deploy simples sem Atlas) ---
 # from pymongo import MongoClient
 # from pymongo.database import Database
 #
@@ -164,7 +164,7 @@ _memory_db = MemoryDatabase()
 
 
 def get_db() -> MemoryDatabase:
-    """Base em RAM (suficiente para testar UI + Gemini no Render sem Mongo)."""
+    """Base em RAM (suficiente para testar UI no Render sem Mongo)."""
     if settings.use_mongo:
         raise RuntimeError("USE_MONGO=true requer pymongo reativado em app/core/database.py")
     return _memory_db
