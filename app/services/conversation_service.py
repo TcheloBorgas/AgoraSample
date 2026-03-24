@@ -8,7 +8,7 @@ from typing import Any
 from dateutil import parser as date_parser
 
 from app.adapters.mcp_tools import CalendarMcpTools
-from app.adapters.ollama_client import OllamaClient
+from app.adapters.local_llm_client import LocalLlmClient
 from app.adapters.openai_compatible_llm import OpenAICompatibleLlmClient
 from app.core.config import settings
 from app.core.metrics import metrics
@@ -42,7 +42,7 @@ class ConversationService:
         trace_service: AgentTraceService,
         proactive: ProactiveSuggestionService,
         turns: VoiceTurnCoordinator,
-        ollama: OllamaClient | None = None,
+        local_llm: LocalLlmClient | None = None,
         openai_compat_llm: OpenAICompatibleLlmClient | None = None,
     ) -> None:
         self.memory = memory
@@ -56,7 +56,7 @@ class ConversationService:
         self.trace_service = trace_service
         self.proactive = proactive
         self.turns = turns
-        self.ollama = ollama
+        self.local_llm = local_llm
         self.openai_compat_llm = openai_compat_llm
 
     def get_proactive_suggestions(self, session_id: str, user_id: str, trigger: str = "manual") -> list[dict]:
@@ -512,7 +512,7 @@ class ConversationService:
                 out[:200],
             )
             return out
-        ollama_ok = use_cloud_fallback_for_unknown and settings.ollama_enabled and self.ollama is not None
+        local_llm_ok = use_cloud_fallback_for_unknown and settings.local_llm_enabled and self.local_llm is not None
         openai_ok = (
             use_cloud_fallback_for_unknown
             and self.openai_compat_llm is not None
@@ -524,21 +524,21 @@ class ConversationService:
                 if result:
                     return result
                 logger.warning("OpenAI-compat LLM devolveu resposta vazia para intent unknown.")
-                if not ollama_ok:
-                    return self.fallback.llm_empty_response_error(language, "OpenAI-compat")
+                if not local_llm_ok:
+                    return self.fallback.llm_empty_response_error(language)
             except Exception as exc:  # noqa: BLE001
-                logger.debug("OpenAI-compat LLM falhou; tentando Ollama ou erro final.", exc_info=True)
-                if not ollama_ok:
-                    return self.fallback.llm_call_failed_error(language, "OpenAI-compat", exc)
-        if use_cloud_fallback_for_unknown and settings.ollama_enabled and self.ollama is not None:
+                logger.debug("OpenAI-compat LLM falhou; tentando LLM local ou erro final.", exc_info=True)
+                if not local_llm_ok:
+                    return self.fallback.llm_call_failed_error(language, exc)
+        if use_cloud_fallback_for_unknown and settings.local_llm_enabled and self.local_llm is not None:
             try:
-                result = self.ollama.chat_reply_sync(prompt, language=language)
+                result = self.local_llm.chat_reply_sync(prompt, language=language)
                 if result:
                     return result
-                logger.warning("Ollama devolveu resposta vazia para intent unknown.")
-                return self.fallback.llm_empty_response_error(language, "Ollama")
+                logger.warning("LLM local devolveu resposta vazia para intent unknown.")
+                return self.fallback.llm_empty_response_error(language)
             except Exception as exc:  # noqa: BLE001
-                return self.fallback.llm_call_failed_error(language, "Ollama", exc)
+                return self.fallback.llm_call_failed_error(language, exc)
         return self.fallback.unknown_intent(language)
 
     def _reparse_as_new_intent(

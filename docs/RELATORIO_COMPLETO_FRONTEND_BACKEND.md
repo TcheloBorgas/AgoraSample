@@ -207,9 +207,9 @@ Responsabilidades:
   - listar/criar/atualizar/remover eventos;
   - detectar conflitos.
 
-#### Ollama
+#### LLM local (HTTP)
 
-- `ollama_client.py`:
+- `local_llm_client.py`:
   - health check;
   - geracao de fallback textual local.
 
@@ -295,7 +295,7 @@ Responsabilidades:
 - `POST /agent/start`
 - `POST /agent/stop/{session_id}`
 - `GET /agent/status/{session_id}`
-- `GET /ollama/health`
+- `GET /local-llm/health`
 - `POST /llm` (callback estilo OpenAI)
 - `POST /mcp` (gateway MCP JSON-RPC simplificado)
 

@@ -54,9 +54,9 @@ class Settings(BaseSettings):
     # Segundos: após o utilizador em remote_rtc_uids sair do canal, o agente CAE encerra (0 = só manual). Ver docs Agora join idle_timeout.
     agora_cae_idle_timeout_seconds: int = Field(default=120, validation_alias="AGORA_CAE_IDLE_TIMEOUT_SECONDS")
     agora_cae_enabled: bool = Field(default=True, validation_alias="AGORA_CAE_ENABLED")
-    ollama_enabled: bool = Field(default=False, validation_alias="OLLAMA_ENABLED")
-    ollama_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="OLLAMA_BASE_URL")
-    ollama_model: str = Field(default="mistral", validation_alias="OLLAMA_MODEL")
+    local_llm_enabled: bool = Field(default=False, validation_alias="LOCAL_LLM_ENABLED")
+    local_llm_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="LOCAL_LLM_BASE_URL")
+    local_llm_model: str = Field(default="mistral", validation_alias="LOCAL_LLM_MODEL")
 
     # API estilo OpenAI (Groq tier grátis, OpenRouter, Gemini compat, etc.) — usada no fallback de intenção unknown
     llm_openai_compat_base_url: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_BASE_URL")
@@ -64,7 +64,7 @@ class Settings(BaseSettings):
     llm_openai_compat_model: str = Field(default="", validation_alias="LLM_OPENAI_COMPAT_MODEL")
     llm_openai_compat_timeout_seconds: int = Field(default=60, validation_alias="LLM_OPENAI_COMPAT_TIMEOUT")
 
-    # Google AI Studio (grátis): uma chave ativa LLM OpenAI-compat sem Groq/Ollama
+    # Google AI Studio (grátis): uma chave ativa LLM OpenAI-compat quando Groq/OpenRouter não estão definidos
     gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
     gemini_model: str = Field(default="gemini-2.0-flash", validation_alias="GEMINI_MODEL")
 

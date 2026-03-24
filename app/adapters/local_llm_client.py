@@ -7,11 +7,13 @@ import httpx
 from app.core.config import settings
 
 
-class OllamaClient:
+class LocalLlmClient:
+    """Cliente HTTP para um LLM em localhost (API /api/chat e /api/generate)."""
+
     def health_sync(self) -> dict[str, Any]:
         try:
             with httpx.Client(timeout=6) as client:
-                response = client.get(f"{settings.ollama_base_url.rstrip('/')}/api/tags")
+                response = client.get(f"{settings.local_llm_base_url.rstrip('/')}/api/tags")
                 return {"ok": response.status_code < 300, "status_code": response.status_code}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
@@ -19,14 +21,14 @@ class OllamaClient:
     async def health(self) -> dict[str, Any]:
         try:
             async with httpx.AsyncClient(timeout=6) as client:
-                response = await client.get(f"{settings.ollama_base_url.rstrip('/')}/api/tags")
+                response = await client.get(f"{settings.local_llm_base_url.rstrip('/')}/api/tags")
                 return {"ok": response.status_code < 300, "status_code": response.status_code}
         except Exception as exc:  # noqa: BLE001
             return {"ok": False, "error": str(exc)}
 
     def chat_reply_sync(self, user_text: str, language: str = "pt") -> str:
-        base = f"{settings.ollama_base_url.rstrip('/')}"
-        model = settings.ollama_model
+        base = f"{settings.local_llm_base_url.rstrip('/')}"
+        model = settings.local_llm_model
         opts = {"temperature": 0.2}
         with httpx.Client(timeout=120) as client:
             chat_body: dict[str, Any] = {
@@ -56,7 +58,7 @@ class OllamaClient:
             }
             response = client.post(f"{base}/api/generate", json=gen_body)
             if response.status_code >= 300:
-                raise RuntimeError(f"Ollama retornou {response.status_code}: {response.text}")
+                raise RuntimeError(f"LLM local HTTP {response.status_code}: {response.text}")
             payload = response.json()
             err = payload.get("error")
             if err:
@@ -64,8 +66,8 @@ class OllamaClient:
             return (payload.get("response") or "").strip()
 
     async def chat_reply(self, user_text: str, language: str = "pt") -> str:
-        base = f"{settings.ollama_base_url.rstrip('/')}"
-        model = settings.ollama_model
+        base = f"{settings.local_llm_base_url.rstrip('/')}"
+        model = settings.local_llm_model
         opts = {"temperature": 0.2}
         chat_body: dict[str, Any] = {
             "model": model,
@@ -95,7 +97,7 @@ class OllamaClient:
             }
             response = await client.post(f"{base}/api/generate", json=gen_body)
             if response.status_code >= 300:
-                raise RuntimeError(f"Ollama retornou {response.status_code}: {response.text}")
+                raise RuntimeError(f"LLM local HTTP {response.status_code}: {response.text}")
             payload = response.json()
             err = payload.get("error")
             if err:
@@ -108,7 +110,7 @@ class OllamaClient:
             return ""
         msg = payload.get("message")
         if isinstance(msg, dict):
-            return OllamaClient._normalize_content(msg.get("content")).strip()
+            return LocalLlmClient._normalize_content(msg.get("content")).strip()
         return (payload.get("response") or "").strip()
 
     @staticmethod

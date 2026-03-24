@@ -8,7 +8,7 @@ Esta pasta contém todo o backend FastAPI.
 - `core/`: configurações (`Settings`), logging JSON, métricas e conexão MongoDB.
 - `models/`: modelos de domínio (`ConversationState`, `ToolExecution`).
 - `schemas/`: contratos da API (`AssistantResponse`, requests, trace).
-- `adapters/`: integrações externas (Agora, Google Calendar, Ollama, MCP tools).
+- `adapters/`: integrações externas (Agora, Google Calendar, LLM local, MCP tools).
 - `repositories/`: acesso persistente ao MongoDB por coleção.
 - `services/`: regras de negócio e orquestração conversacional.
 - `routers/`: endpoints HTTP (`/api/conversation`, `/api/system`, `/api/cae`).

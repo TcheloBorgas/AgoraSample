@@ -234,21 +234,21 @@ class FallbackService:
             "Reformule como criar, listar, reagendar ou cancelar uma reunião."
         )
 
-    def llm_empty_response_error(self, language: str, provider: str) -> str:
+    def llm_empty_response_error(self, language: str) -> str:
         if language == "es":
-            return f"Error: el servicio LLM ({provider}) devolvió una respuesta vacía."
+            return "Error: el servicio de modelo devolvió una respuesta vacía."
         if language == "en":
-            return f"Error: the LLM service ({provider}) returned an empty response."
-        return f"Erro: o serviço LLM ({provider}) devolveu uma resposta vazia."
+            return "Error: the model service returned an empty response."
+        return "Erro: o serviço de modelo devolveu uma resposta vazia."
 
-    def llm_call_failed_error(self, language: str, provider: str, exc: BaseException | None = None) -> str:
+    def llm_call_failed_error(self, language: str, exc: BaseException | None = None) -> str:
         tail = ""
         if exc is not None:
             msg = str(exc).strip().replace("\n", " ")[:160]
             if msg:
                 tail = f" Causa: {type(exc).__name__}: {msg}"
         if language == "es":
-            return f"Error: falló la llamada al servicio LLM ({provider}).{tail}"
+            return f"Error: falló la llamada al servicio de modelo.{tail}"
         if language == "en":
-            return f"Error: call to LLM service ({provider}) failed.{tail}"
-        return f"Erro: falhou a chamada ao serviço LLM ({provider}).{tail}"
+            return f"Error: call to the model service failed.{tail}"
+        return f"Erro: falhou a chamada ao serviço de modelo.{tail}"

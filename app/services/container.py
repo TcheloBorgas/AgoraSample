@@ -3,7 +3,7 @@ from functools import lru_cache
 from app.adapters.agora_cae_client import AgoraConversationalAIClient
 from app.adapters.agora_client import AgoraClient
 from app.adapters.google_calendar_client import GoogleCalendarClient
-from app.adapters.ollama_client import OllamaClient
+from app.adapters.local_llm_client import LocalLlmClient
 from app.adapters.openai_compatible_llm import OpenAICompatibleLlmClient
 from app.adapters.mcp_tools import CalendarMcpTools
 from app.repositories.action_log_repository import ActionLogRepository
@@ -133,7 +133,7 @@ def get_conversation_service() -> ConversationService:
         fallback=get_fallback_service(),
         actions=get_action_log_repository(),
         preferences=get_preference_repository(),
-        ollama=get_ollama_client(),
+        local_llm=get_local_llm_client(),
         openai_compat_llm=get_openai_compatible_llm_client(),
         mcp_tools=get_mcp_tools(),
         trace_service=get_trace_service(),
@@ -158,8 +158,8 @@ def get_cae_service() -> CAEService:
 
 
 @lru_cache
-def get_ollama_client() -> OllamaClient:
-    return OllamaClient()
+def get_local_llm_client() -> LocalLlmClient:
+    return LocalLlmClient()
 
 
 @lru_cache

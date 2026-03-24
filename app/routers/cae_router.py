@@ -14,9 +14,9 @@ from pydantic import BaseModel, Field
 from app.adapters.mcp_tools import CalendarMcpTools
 from app.core.config import settings
 from app.services.cae_service import CAEService
-from app.services.container import get_cae_service, get_conversation_service, get_mcp_tools, get_ollama_client
+from app.services.container import get_cae_service, get_conversation_service, get_mcp_tools, get_local_llm_client
 from app.services.conversation_service import ConversationService
-from app.adapters.ollama_client import OllamaClient
+from app.adapters.local_llm_client import LocalLlmClient
 
 router = APIRouter(prefix="/api/cae", tags=["cae"])
 logger = logging.getLogger(__name__)
@@ -189,9 +189,9 @@ async def start_cae_agent(
         raise HTTPException(status_code=500, detail=detail) from exc
 
 
-@router.get("/ollama/health")
-async def ollama_health(ollama: OllamaClient = Depends(get_ollama_client)):
-    return await ollama.health()
+@router.get("/local-llm/health")
+async def local_llm_health(local_llm: LocalLlmClient = Depends(get_local_llm_client)):
+    return await local_llm.health()
 
 
 @router.post("/agent/stop/{session_id}")

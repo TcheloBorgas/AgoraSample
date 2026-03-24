@@ -51,7 +51,7 @@ Estrutura modular (separacao por responsabilidade):
 
 - `app/routers`: endpoints HTTP (`conversation`, `system`, `cae`);
 - `app/services`: regras de negocio e orquestracao de dialogo;
-- `app/adapters`: integracoes externas (Agora, Google Calendar, Ollama);
+- `app/adapters`: integracoes externas (Agora, Google Calendar, LLM local HTTP);
 - `app/repositories`: persistencia em MongoDB;
 - `app/core`: config, logging, metricas e conexao DB;
 - `app/models` e `app/schemas`: modelos de dominio e contratos de API;
@@ -103,7 +103,7 @@ MongoDB com colecoes:
 - Google Calendar API (OAuth local);
 - Agora RTC (audio real-time);
 - Agora CAE (quando habilitado);
-- Ollama (fallback de resposta para unknown intent, quando habilitado).
+- LLM local HTTP (fallback de resposta para unknown intent, quando `LOCAL_LLM_ENABLED=true`).
 
 ### Output layer
 
@@ -131,7 +131,7 @@ MongoDB com colecoes:
 - `POST /api/cae/agent/start`
 - `POST /api/cae/agent/stop/{session_id}`
 - `GET /api/cae/agent/status/{session_id}`
-- `GET /api/cae/ollama/health`
+- `GET /api/cae/local-llm/health`
 - `POST /api/cae/llm` (callback estilo OpenAI para CAE custom LLM)
 - `POST /api/cae/mcp` (gateway MCP simplificado para tools de agenda)
 
@@ -167,7 +167,7 @@ MongoDB com colecoes:
 
 - dateparser (parse de datas/horarios naturais)
 - python-dateutil (parse ISO/datas)
-- fallback com modelo local Ollama (`mistral`) quando habilitado
+- fallback com modelo local HTTP (`LOCAL_LLM_*`, ex. `mistral`) quando habilitado
 
 ## HTTP e integracoes
 
@@ -204,10 +204,10 @@ MongoDB com colecoes:
 - Mongo:
   - `MONGO_URI`
   - `MONGO_DB_NAME`
-- Ollama:
-  - `OLLAMA_ENABLED`
-  - `OLLAMA_BASE_URL`
-  - `OLLAMA_MODEL`
+- LLM local:
+  - `LOCAL_LLM_ENABLED`
+  - `LOCAL_LLM_BASE_URL`
+  - `LOCAL_LLM_MODEL`
 
 ## 8) Como o sistema opera no dia a dia
 
