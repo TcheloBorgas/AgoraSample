@@ -1074,6 +1074,24 @@ async function startCaeAgent(sessionId, channel, token, remoteUid) {
   return parseJsonResponse(text, "CAE");
 }
 
+/**
+ * Se o 1.º ciclo de retries do backend esgotar numa fila Agora (429), uma pausa + 2.º pedido
+ * muitas vezes acerta quando a capacidade abre (não substitui quota/plano Agora).
+ */
+async function startCaeAgentWithBackoffRetry(sessionId, channel, token, remoteUid) {
+  try {
+    return await startCaeAgent(sessionId, channel, token, remoteUid);
+  } catch (e) {
+    const msg = String(e?.message || e || "");
+    const looksLikeCapacity =
+      /429|capacidade|vendor|allocate failed|Too Many Requests|Falha ao iniciar CAE|503|500/i.test(msg);
+    if (!looksLikeCapacity) throw e;
+    log("CAE: primeira série de tentativas falhou (fila/capacidade). Pausa de 22s e nova série no servidor…");
+    await new Promise((r) => setTimeout(r, 22000));
+    return await startCaeAgent(sessionId, channel, token, remoteUid);
+  }
+}
+
 async function connectAgora() {
   if (!window.AgoraRTC) throw new Error("Agora SDK not loaded.");
   if (isConnectingAgora) {
@@ -1201,7 +1219,7 @@ async function connectAgora() {
     try {
       let cae;
       try {
-        cae = await startCaeAgent(sessionId, data.channel, data.token, localRtcUid);
+        cae = await startCaeAgentWithBackoffRetry(sessionId, data.channel, data.token, localRtcUid);
       } catch (e) {
         if (e && e.name === "AbortError") {
           throw new Error(

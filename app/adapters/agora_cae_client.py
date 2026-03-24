@@ -12,8 +12,11 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 429 «allocate failed / vendor capacity» na Agora: várias tentativas com teto de espera (somatório ~3–4 min).
-_CAE_JOIN_MAX_ATTEMPTS_RATE_LIMIT = 12
+# Um POST /join de cada vez por processo uvicorn — evita rajada de 429 quando várias sessões ligam em simultâneo.
+_cae_join_serial_lock = asyncio.Lock()
+
+# 429 «allocate failed / vendor capacity» na Agora: várias tentativas com teto de espera (somatório ~3–5 min).
+_CAE_JOIN_MAX_ATTEMPTS_RATE_LIMIT = 15
 _CAE_JOIN_MAX_BACKOFF_SEC = 42.0
 _CAE_JOIN_BASE_BACKOFF_429 = 2.4
 _CAE_JOIN_BACKOFF_MULT_429 = 1.55
@@ -47,6 +50,11 @@ class AgoraConversationalAIClient:
         return {"Authorization": f"Basic {token}"}
 
     async def start_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
+        async with _cae_join_serial_lock:
+            logger.debug("CAE join: fila global — a executar POST /join (1 de cada vez neste worker).")
+            return await self._start_agent_unlocked(payload)
+
+    async def _start_agent_unlocked(self, payload: dict[str, Any]) -> dict[str, Any]:
         url = f"{self.base_url}/projects/{settings.agora_app_id}/join"
         headers = {"Content-Type": "application/json", **self._auth_header()}
         timeout = httpx.Timeout(connect=15.0, read=60.0, write=30.0, pool=30.0)
