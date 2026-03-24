@@ -1,5 +1,15 @@
 .env
 .env.example
+.env.local
+.env.development
+.env.production
+.env.test
+.env.test.local
+.env.test.production
+.env.test.development
+.env.test.local.production
+.env.test.local.development
+.example
 __pycache__/
 *.pyc
 *.pyo
@@ -19,3 +29,4 @@ Thumbs.db
 
 # Documentação local / notas de fluxo (não versionada)
 docs/
+.env.example

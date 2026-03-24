@@ -27,6 +27,10 @@ const REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS = 220;
 let remoteAudioPublishDebounceTimers = new Map();
 /** Primeiro user-published do burst (por uid), para max-wait. */
 let remoteAudioPublishBurstStartTs = new Map();
+/** Evita subscribe/play em rajada para o mesmo uid. */
+let remoteAudioSubscribeInFlightByUid = new Map();
+let remoteAudioLastSubscribeAtByUid = new Map();
+const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
 
 function clearRemoteAudioPublishDebouncers() {
   for (const tid of remoteAudioPublishDebounceTimers.values()) {
@@ -34,6 +38,8 @@ function clearRemoteAudioPublishDebouncers() {
   }
   remoteAudioPublishDebounceTimers.clear();
   remoteAudioPublishBurstStartTs.clear();
+  remoteAudioSubscribeInFlightByUid.clear();
+  remoteAudioLastSubscribeAtByUid.clear();
 }
 
 function cancelRemoteAudioPublishDebounce(uidStr) {
@@ -93,6 +99,7 @@ function pruneRemoteAudioTracksFromClient() {
 
 let recordingContext = null;
 let recordingStream = null;
+let recordingSource = null;
 let recordingNode = null;
 let recordingChunks = [];
 let isRecording = false;
@@ -549,6 +556,15 @@ function hideAudioUnlockBar() {
   audioUnlockBarEl.classList.add("hidden");
 }
 
+async function setRtcMicCaptureEnabled(enabled) {
+  if (!localTrack || typeof localTrack.setEnabled !== "function") return;
+  try {
+    await localTrack.setEnabled(Boolean(enabled));
+  } catch (err) {
+    log(`RTC mic setEnabled(${enabled ? "on" : "off"}): ${err?.message || err}`);
+  }
+}
+
 function setupAgoraAutoplayHook() {
   if (agoraAutoplayHooked || !window.AgoraRTC) return;
   agoraAutoplayHooked = true;
@@ -654,11 +670,26 @@ async function playRemoteAudioTrack(track, uid) {
  */
 async function applyRemoteUserAudioPublished(uidStr) {
   if (!agoraClient) return;
+  const inFlight = remoteAudioSubscribeInFlightByUid.get(uidStr);
+  if (inFlight) {
+    await inFlight;
+    return;
+  }
+  const run = (async () => {
   const users = agoraClient.remoteUsers || [];
   const user = users.find((u) => String(u.uid) === uidStr);
   if (!user || !user.hasAudio) return;
+  const currentTrack = user.audioTrack;
+  const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
+  const now = Date.now();
+  const lastSubAt = remoteAudioLastSubscribeAtByUid.get(uidStr) || 0;
+  const tooSoon = now - lastSubAt < REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS;
+  if (currentTrack && prevTrack === currentTrack && tooSoon) {
+    return;
+  }
   try {
     await agoraClient.subscribe(user, "audio");
+    remoteAudioLastSubscribeAtByUid.set(uidStr, Date.now());
   } catch (subErr) {
     log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
     return;
@@ -692,6 +723,13 @@ async function applyRemoteUserAudioPublished(uidStr) {
   const playedOk = await playRemoteAudioTrack(track, uidForPlay);
   if (!playedOk) {
     lastRemoteAudioTrackByUid.delete(uidStr);
+  }
+  })();
+  remoteAudioSubscribeInFlightByUid.set(uidStr, run);
+  try {
+    await run;
+  } finally {
+    remoteAudioSubscribeInFlightByUid.delete(uidStr);
   }
 }
 
@@ -970,6 +1008,8 @@ async function connectAgora() {
       remoteAudioPublishBurstStartTs.delete(uidStr);
       log(`RTC user-unpublished uid=${user.uid} mediaType=${mediaType}`);
       lastRemoteAudioTrackByUid.delete(uidStr);
+      remoteAudioLastSubscribeAtByUid.delete(uidStr);
+      remoteAudioSubscribeInFlightByUid.delete(uidStr);
       pruneRemoteAudioTracksFromClient();
     });
     agoraClient.on("user-published", (user, mediaType) => {
@@ -994,6 +1034,8 @@ async function connectAgora() {
     localTrack = await AgoraRTC.createMicrophoneAudioTrack();
     log(t("logAgoraStepPublish"));
     await agoraClient.publish([localTrack]);
+    // Mantém o microfone RTC fechado até o usuário iniciar captura explicitamente.
+    await setRtcMicCaptureEnabled(false);
     isRtcConnected = true;
     setRtcStatus(true, `uid=${localRtcUid}`);
     log(`${t("logConnected")} ${data.channel}.`);
@@ -1189,6 +1231,7 @@ async function transcribeRecordedAudio(wavBlob) {
 
 async function startRecording() {
   if (isRecording) return;
+  await setRtcMicCaptureEnabled(true);
   try {
     const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
     permission.getTracks().forEach((track) => track.stop());
@@ -1197,13 +1240,13 @@ async function startRecording() {
   }
   recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   recordingContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  const source = recordingContext.createMediaStreamSource(recordingStream);
+  recordingSource = recordingContext.createMediaStreamSource(recordingStream);
   recordingNode = recordingContext.createScriptProcessor(4096, 1, 1);
   recordingChunks = [];
   recordingNode.onaudioprocess = (event) => {
     recordingChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
   };
-  source.connect(recordingNode);
+  recordingSource.connect(recordingNode);
   recordingNode.connect(recordingContext.destination);
   isRecording = true;
   setVoiceUiState("listening");
@@ -1213,9 +1256,31 @@ async function startRecording() {
 async function stopRecordingAndSend() {
   if (!isRecording) return;
   isRecording = false;
-  recordingNode.disconnect();
-  recordingStream.getTracks().forEach((track) => track.stop());
-  await recordingContext.close();
+  if (recordingNode) {
+    try {
+      recordingNode.disconnect();
+    } catch (_e) {}
+  }
+  if (recordingSource) {
+    try {
+      recordingSource.disconnect();
+    } catch (_e) {}
+  }
+  if (recordingStream) {
+    try {
+      recordingStream.getTracks().forEach((track) => track.stop());
+    } catch (_e) {}
+  }
+  if (recordingContext) {
+    try {
+      await recordingContext.close();
+    } catch (_e) {}
+  }
+  recordingNode = null;
+  recordingSource = null;
+  recordingStream = null;
+  recordingContext = null;
+  await setRtcMicCaptureEnabled(false);
   setVoiceUiState("thinking");
 
   const totalLength = recordingChunks.reduce((acc, item) => acc + item.length, 0);
@@ -1277,6 +1342,7 @@ voiceToggleBtnEl.addEventListener("click", async () => {
       await startRecording();
       return;
     }
+    await signalInterrupt();
     await stopRecordingAndSend();
     setVoiceUiState("idle");
     refreshVoiceToggleButton();
@@ -1327,6 +1393,10 @@ sessionIdEl.addEventListener("input", () => {
   setContextState({ sessionId: sessionIdEl.value.trim() || "-" });
 });
 
+if ((sessionIdEl.value || "").trim() === "sessao-demo-1") {
+  sessionIdEl.value = `sessao-${Date.now()}`;
+}
+
 setRtcStatus(false, t("statusWaiting"));
 setContextState({
   sessionId: sessionIdEl.value.trim(),
@@ -1345,6 +1415,18 @@ setInterval(() => {
 
 audioUnlockBtnEl?.addEventListener("click", () => {
   resumeAllRemoteAudio();
+});
+
+window.addEventListener("beforeunload", () => {
+  try {
+    if (isRecording) {
+      stopRecordingAndSend().catch(() => {});
+    } else {
+      setRtcMicCaptureEnabled(false).catch(() => {});
+    }
+    clearRemoteAudioPublishDebouncers();
+    clearCaeRemoteAudioWatchdog();
+  } catch (_e) {}
 });
 
 (function setupErrorModal() {
