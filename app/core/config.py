@@ -50,6 +50,8 @@ class Settings(BaseSettings):
     agora_cae_tts_elevenlabs_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_ELEVENLABS_KEY")
     agora_cae_tts_elevenlabs_voice_id: str = Field(default="pNInz6obpgDQGcFmaJgB", validation_alias="AGORA_CAE_TTS_ELEVENLABS_VOICE_ID")
     agora_cae_tts_elevenlabs_model_id: str = Field(default="eleven_flash_v2_5", validation_alias="AGORA_CAE_TTS_ELEVENLABS_MODEL_ID")
+    # Segundos: após o utilizador em remote_rtc_uids sair do canal, o agente CAE encerra (0 = só manual). Ver docs Agora join idle_timeout.
+    agora_cae_idle_timeout_seconds: int = Field(default=120, validation_alias="AGORA_CAE_IDLE_TIMEOUT_SECONDS")
     agora_cae_enabled: bool = Field(default=True, validation_alias="AGORA_CAE_ENABLED")
     ollama_enabled: bool = Field(default=False, validation_alias="OLLAMA_ENABLED")
     ollama_base_url: str = Field(default="http://127.0.0.1:11434", validation_alias="OLLAMA_BASE_URL")

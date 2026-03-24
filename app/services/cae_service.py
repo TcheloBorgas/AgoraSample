@@ -106,17 +106,30 @@ class CAEService:
         )
 
         tts_cfg = self._build_tts_config(language)
+        tts_vendor = (tts_cfg.get("vendor") or "").lower()
+        if tts_vendor == "elevenlabs":
+            el_key_ok = bool((settings.agora_cae_tts_elevenlabs_key or "").strip())
+            logger.info(
+                "CAE join ElevenLabs: voice_id=%s model_id=%s sample_rate=24000 key_configurada=%s "
+                "(sintese no motor Agora CAE; FastAPI só envia esta config no join).",
+                (tts_cfg.get("params") or {}).get("voice_id"),
+                (tts_cfg.get("params") or {}).get("model_id"),
+                el_key_ok,
+            )
+        else:
+            logger.info("CAE join TTS vendor=%s (sem detalhe ElevenLabs).", tts_vendor)
         logger.info(
             "CAE join properties.tts efectivo (sem segredos): %s",
             self._tts_config_to_public(tts_cfg),
         )
 
+        idle_to = max(0, int(settings.agora_cae_idle_timeout_seconds))
         properties: dict[str, Any] = {
             "channel": channel,
             "token": agent_token,
             "agent_rtc_uid": str(settings.agora_cae_agent_uid),
             "remote_rtc_uids": [str(remote_uid)],
-            "idle_timeout": 0,
+            "idle_timeout": idle_to,
             "llm": llm_config,
             "asr": {
                 "language": language,
@@ -151,6 +164,12 @@ class CAEService:
         llm_u = str(properties.get("llm", {}).get("url", ""))[:120]
         fail_msg = str(properties.get("llm", {}).get("failure_message", ""))[:160]
         greet_msg = str(properties.get("llm", {}).get("greeting_message", ""))[:120]
+        logger.info(
+            "CAE join audio/canal: idle_timeout=%s s (agente para após o utilizador sair do canal e este tempo; 0=só manual). "
+            "remote_rtc_uids=%s",
+            idle_to,
+            properties.get("remote_rtc_uids"),
+        )
         logger.info(
             "CAE join resumo LLM: url_prefix=%r output_modalities=%s failure_message_preview=%r "
             "greeting_preview=%r mcp_tools=%s",

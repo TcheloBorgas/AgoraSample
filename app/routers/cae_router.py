@@ -164,9 +164,13 @@ async def start_cae_agent(
         )
         tts_public = service.describe_tts_public(payload.language)
         logger.info(
-            "Resposta /api/cae/agent/start: CAE ativo; voce deve ouvir a voz do agente via track de audio remoto RTC "
-            "(TTS do pipeline CAE / Agora). tts=%s",
+            "Resposta /api/cae/agent/start: CAE ativo; voz = TTS no motor Agora (ex. ElevenLabs se vendor=elevenlabs). "
+            "tts_public=%s | AGORA_CAE_TTS_VENDOR=%r voice_id_env=%r model_id_env=%r el_key=%s",
             tts_public,
+            settings.agora_cae_tts_vendor,
+            settings.agora_cae_tts_elevenlabs_voice_id,
+            settings.agora_cae_tts_elevenlabs_model_id,
+            "sim" if (settings.agora_cae_tts_elevenlabs_key or "").strip() else "nao",
         )
         return {
             "started": True,
@@ -217,6 +221,13 @@ def get_cae_voice_source(
     Diagnóstico rápido para confirmar a voz efetiva do pipeline CAE (vendor/model/voice).
     """
     tts_public = service.describe_tts_public(language)
+    logger.info(
+        "GET /api/cae/agent/voice/source language=%r vendor_env=%r cae_tts=%s el_key=%s",
+        language,
+        settings.agora_cae_tts_vendor,
+        tts_public,
+        "sim" if (settings.agora_cae_tts_elevenlabs_key or "").strip() else "nao",
+    )
     return {
         "language": language,
         "configured_vendor_env": settings.agora_cae_tts_vendor,
@@ -387,6 +398,13 @@ async def cae_llm_callback(
                         len(out_text),
                         elapsed_ms,
                     )
+                if _should_emit_log(f"cae_llm_tts_pipeline:{session_id}", window_sec=6.0):
+                    logger.info(
+                        "CAE_LLM -> TTS: o texto acima segue para o CAE Agora; com vendor=elevenlabs a sintese usa "
+                        "voice_id=%r model_id=%r (configurado no join; nao passa pelo FastAPI).",
+                        settings.agora_cae_tts_elevenlabs_voice_id,
+                        settings.agora_cae_tts_elevenlabs_model_id,
+                    )
                 return StreamingResponse(
                     _openai_chat_completion_sse(out_text, include_usage=include_usage),
                     media_type="text/event-stream",
@@ -418,6 +436,12 @@ async def cae_llm_callback(
                     result.intent,
                     len(out_text),
                     elapsed_ms,
+                )
+            if _should_emit_log(f"cae_llm_tts_pipeline_json:{session_id}", window_sec=6.0):
+                logger.info(
+                    "CAE_LLM -> TTS (JSON): texto para sintese no CAE; elevenlabs voice_id=%r model_id=%r.",
+                    settings.agora_cae_tts_elevenlabs_voice_id,
+                    settings.agora_cae_tts_elevenlabs_model_id,
                 )
             return body_out
     except HTTPException:

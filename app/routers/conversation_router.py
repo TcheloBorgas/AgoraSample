@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -14,6 +16,7 @@ from app.services.agent_trace_service import AgentTraceService
 from app.services.voice_turn_coordinator import VoiceTurnCoordinator
 
 router = APIRouter(prefix="/api/conversation", tags=["conversation"])
+logger = logging.getLogger(__name__)
 
 
 @router.post("/{session_id}/message", response_model=AssistantResponse)
@@ -87,6 +90,12 @@ def interrupt_voice_turn(
     turns: VoiceTurnCoordinator = Depends(get_voice_turn_coordinator),
 ):
     state = turns.register_user_interrupt(session_id)
+    logger.info(
+        "POST /voice/interrupt session_id=%s agent_speaking=%s user_interrupting=%s",
+        session_id,
+        state.agent_speaking,
+        state.user_interrupting,
+    )
     return {
         "session_id": session_id,
         "agent_speaking": state.agent_speaking,
@@ -102,6 +111,7 @@ def set_agent_speaking(
     speaking: bool,
     turns: VoiceTurnCoordinator = Depends(get_voice_turn_coordinator),
 ):
+    logger.info("POST /voice/agent-speaking session_id=%s speaking=%s", session_id, speaking)
     state = turns.set_agent_speaking(session_id=session_id, speaking=speaking)
     if not speaking:
         turns.mark_revision_applied(session_id)

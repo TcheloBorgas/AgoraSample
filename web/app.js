@@ -8,6 +8,8 @@ let localRtcUid = null;
 let expectedCaeAgentUid = null;
 let caeAgentAudioReceived = false;
 let caeRemoteAudioWatchdogTimer = null;
+/** Só true quando o track local está publicado no canal (PTT: CAE/ASR só recebe áudio neste período). */
+let localRtcAudioPublishedToChannel = false;
 
 /** Tracks de áudio remoto (agente CAE) para retomar play após bloqueio de autoplay */
 let remoteAudioTracks = [];
@@ -99,6 +101,7 @@ function scheduleApplyRemoteUserAudio(uidStr) {
   const run = () => {
     remoteAudioPublishDebounceTimers.delete(uidStr);
     remoteAudioPublishBurstStartTs.delete(uidStr);
+    logAudioDiag("debounce", "fim debounce → subscribe/play", { uid: uidStr });
     applyRemoteUserAudioPublished(uidStr).catch((err) => {
       log(`RTC áudio remoto (debounce): ${err?.message || err}`);
     });
@@ -258,10 +261,9 @@ const UI_TEXTS = {
       "Olá! Para agendar, vou pedir seu nome, o assunto da reunião (esse texto vira o nome do evento no calendário), seu e-mail e data/hora. Também posso listar, reagendar ou cancelar. Links não são lidos em voz.",
     logConnecting: "Conexão com Agora em andamento.",
     logAlreadyConnected: "Já conectado no canal Agora.",
-    logAgoraStepSession: "1/4 A pedir token ao backend…",
-    logAgoraStepJoin: "2/4 A entrar no canal RTC…",
-    logAgoraStepMic: "3/4 A abrir o microfone…",
-    logAgoraStepPublish: "4/4 A publicar áudio…",
+    logAgoraStepSession: "1/3 A pedir token ao backend…",
+    logAgoraStepJoin: "2/3 A entrar no canal RTC…",
+    logAgoraStepMic: "3/3 A preparar o microfone (só envia áudio ao CAE ao premir o botão de voz)…",
     logAgoraJoinHint:
       "Se falhar aqui: token inválido ou expirado. No backend defina AGORA_APP_CERTIFICATE (Console Agora) em vez de só AGORA_TEMP_TOKEN.",
     logConnected: "Agora conectada no canal",
@@ -269,11 +271,11 @@ const UI_TEXTS = {
     logRemoteAudio: "Áudio remoto ativo",
     logCaeTtsPlaying:
       "TTS CAE (Agora): áudio remoto do agente — voz sintetizada pelo Conversational AI no canal RTC.",
-    logCaeActive: "CAE ativo. Fale normalmente sem usar captura local.",
+    logCaeActive: "CAE ativo. Prima o botão de voz para o microfone entrar no canal (push-to-talk).",
     logCaeSpeakHint:
-      "Voz CAE no RTC: fale no microfone (áudio já publicado). O chat/STT só atualiza texto no FastAPI — não manda TTS pelo Agora. Aguarde user-published de áudio após o agente responder.",
+      "Voz CAE: sem premir o botão, o teu áudio não é publicado no RTC — o agente não ouve. Com o botão ativo, fala; o TTS do agente vem do CAE (ex. ElevenLabs). Chat/STT local só atualiza texto no servidor.",
     logCaeLocalRecord:
-      "CAE ativo: a transcrição no chat usa captura local (STT). O agente CAE também pode ouvir pelo canal RTC.",
+      "CAE ativo: captura local para STT no chat; o CAE ouve só enquanto o botão de voz está ligado (áudio RTC publicado).",
     logCaeFallback: "CAE indisponível. Mantendo fluxo local com voz + chat.",
     logCaeRemoteAudioOk:
       "RTC: primeiro áudio publicado pelo agente CAE (uid=%s) — o browser deve reproduzir (ou pedir «Ativar áudio»).",
@@ -357,16 +359,19 @@ const UI_TEXTS = {
       "Hello! To schedule, I'll ask your name, meeting subject, email, and date and time. I can also list, reschedule, or cancel. Calendar links are not read aloud.",
     logConnecting: "Connecting to Agora...",
     logAlreadyConnected: "Already connected to Agora channel.",
+    logAgoraStepSession: "1/3 Requesting token from backend…",
+    logAgoraStepJoin: "2/3 Joining RTC channel…",
+    logAgoraStepMic: "3/3 Preparing mic (audio published only while voice button is on)…",
     logConnected: "Agora connected on channel",
     logRemoteUserJoined: "RTC: remote participant joined — uid=%s (expected: CAE agent).",
     logRemoteAudio: "Remote audio active",
     logCaeTtsPlaying:
       "CAE TTS (Agora): remote agent audio — synthesized by Conversational AI on the RTC channel.",
-    logCaeActive: "CAE active. Speak normally without local capture.",
+    logCaeActive: "CAE active. Press the voice button to publish your mic (push-to-talk).",
     logCaeSpeakHint:
-      "CAE voice on RTC: speak into the mic (audio is published). Chat/STT only updates the FastAPI text — it does not send Agora TTS. Wait for remote audio after the agent replies.",
+      "CAE: without the voice button, your audio is not on the channel. When on, speak; agent TTS comes from CAE (e.g. ElevenLabs). Local chat/STT only updates server text.",
     logCaeLocalRecord:
-      "CAE active: chat transcription uses local capture (STT). The CAE agent may also listen via RTC.",
+      "CAE active: local capture for chat STT; CAE listens only while the voice button is on.",
     logCaeFallback: "CAE unavailable. Keeping local voice + chat flow.",
     logCaeRemoteAudioOk:
       "RTC: first remote audio published by CAE agent (uid=%s) — browser should play (or use «Enable agent audio»).",
@@ -450,16 +455,19 @@ const UI_TEXTS = {
       "¡Hola! Para agendar pediré tu nombre, el asunto, tu correo y la fecha/hora. También puedo listar, reagendar o cancelar. No leo enlaces del calendario en voz alta.",
     logConnecting: "Conectando con Agora...",
     logAlreadyConnected: "Ya conectado al canal de Agora.",
+    logAgoraStepSession: "1/3 Pidiendo token al backend…",
+    logAgoraStepJoin: "2/3 Entrando al canal RTC…",
+    logAgoraStepMic: "3/3 Preparando micrófono (solo publica al pulsar voz)…",
     logConnected: "Agora conectada en el canal",
     logRemoteUserJoined: "RTC: participante remoto entró — uid=%s (esperado: agente CAE).",
     logRemoteAudio: "Audio remoto activo",
     logCaeTtsPlaying:
       "TTS CAE (Agora): audio remoto del agente — voz sintetizada por Conversational AI en el canal RTC.",
-    logCaeActive: "CAE activo. Habla normalmente sin captura local.",
+    logCaeActive: "CAE activo. Pulsa el botón de voz para publicar el micrófono (push-to-talk).",
     logCaeSpeakHint:
-      "Voz CAE en RTC: habla al micrófono. El chat/STT solo actualiza texto en el servidor — no envía TTS por Agora. Espera user-published cuando el agente hable.",
+      "CAE: sin pulsar voz, tu audio no está en el canal. Con el botón activo, habla; el TTS del agente viene del CAE. El STT local solo actualiza texto en el servidor.",
     logCaeLocalRecord:
-      "CAE activo: la transcripción en el chat usa captura local (STT). El agente CAE también puede oír por RTC.",
+      "CAE activo: captura local para STT; el CAE escucha solo mientras el botón de voz está activo.",
     logCaeFallback: "CAE no disponible. Manteniendo flujo local de voz + chat.",
     logCaeRemoteAudioOk:
       "RTC: primer audio publicado por el agente CAE (uid=%s).",
@@ -581,6 +589,16 @@ function hideErrorPopup() {
   modal.setAttribute("aria-hidden", "true");
 }
 
+/** Diagnóstico de áudio / RTC (painel #log + consola). */
+function logAudioDiag(phase, detail, extra) {
+  const rel =
+    typeof performance !== "undefined" && performance.now
+      ? `+${performance.now().toFixed(0)}ms`
+      : "";
+  const tail = extra != null ? ` ${typeof extra === "string" ? extra : JSON.stringify(extra)}` : "";
+  log(`[audio] ${rel} ${phase}: ${detail}${tail}`);
+}
+
 function log(message) {
   const line = `[${new Date().toLocaleTimeString()}] ${message}`;
   if (typeof console !== "undefined" && console.log) {
@@ -644,8 +662,32 @@ async function setRtcMicCaptureEnabled(enabled) {
   if (!localTrack || typeof localTrack.setEnabled !== "function") return;
   try {
     await localTrack.setEnabled(Boolean(enabled));
+    logAudioDiag("RTC mic", `setEnabled(${enabled ? "on" : "off"})`, { published: localRtcAudioPublishedToChannel });
   } catch (err) {
     log(`RTC mic setEnabled(${enabled ? "on" : "off"}): ${err?.message || err}`);
+  }
+}
+
+/**
+ * Publica ou retira o microfone RTC do canal. Enquanto não publicado, o CAE não recebe áudio do utilizador (push-to-talk).
+ */
+async function setLocalRtcAudioUpstream(publish) {
+  if (!agoraClient || !localTrack || !isRtcConnected) return;
+  try {
+    if (publish) {
+      if (localRtcAudioPublishedToChannel) return;
+      await agoraClient.publish([localTrack]);
+      localRtcAudioPublishedToChannel = true;
+      logAudioDiag("RTC upstream", "publish — microfone no canal (CAE/ASR pode ouvir)");
+    } else {
+      if (!localRtcAudioPublishedToChannel) return;
+      await agoraClient.unpublish([localTrack]);
+      localRtcAudioPublishedToChannel = false;
+      logAudioDiag("RTC upstream", "unpublish — sem áudio do utilizador no canal até novo PTT");
+    }
+  } catch (err) {
+    log(`RTC publish/unpublish: ${err?.message || err}`);
+    logAudioDiag("RTC upstream", "erro publish/unpublish", String(err?.message || err));
   }
 }
 
@@ -700,6 +742,7 @@ function markCaeAgentAudioPublished(uid) {
   if (caeAgentAudioReceived) return;
   caeAgentAudioReceived = true;
   clearCaeRemoteAudioWatchdog();
+  logAudioDiag("cae_agent", "primeiro user-published áudio do agente", { uid: String(uid) });
   log(t("logCaeRemoteAudioOk").replace("%s", String(uid)));
 }
 
@@ -760,9 +803,13 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   const run = (async () => {
+  logAudioDiag("remote_audio", "applyRemoteUserAudioPublished início", { uid: uidStr });
   const users = agoraClient.remoteUsers || [];
   const user = users.find((u) => String(u.uid) === uidStr);
-  if (!user || !user.hasAudio) return;
+  if (!user || !user.hasAudio) {
+    logAudioDiag("remote_audio", "skip sem hasAudio", { uid: uidStr });
+    return;
+  }
   const currentTrack = user.audioTrack;
   const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
   const now = Date.now();
@@ -775,10 +822,13 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   try {
+    logAudioDiag("remote_audio", "subscribe(audio)…", { uid: uidStr });
     await agoraClient.subscribe(user, "audio");
     remoteAudioLastSubscribeAtByUid.set(uidStr, Date.now());
+    logAudioDiag("remote_audio", "subscribe(audio) OK", { uid: uidStr });
   } catch (subErr) {
     log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
+    logAudioDiag("remote_audio", "subscribe FALHOU", { uid: uidStr, err: String(subErr?.message || subErr) });
     return;
   }
   const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
@@ -792,6 +842,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
   }
   if (!track) {
     log(`RTC: subscribe OK mas audioTrack ainda ausente (uid=${uidStr}).`);
+    logAudioDiag("remote_audio", "audioTrack ausente após subscribe", { uid: uidStr });
     return;
   }
   const uidForPlay = remote?.uid ?? user.uid;
@@ -807,7 +858,9 @@ async function applyRemoteUserAudioPublished(uidStr) {
   if (!remoteAudioTracks.some((tr) => tr === track)) {
     remoteAudioTracks.push(track);
   }
+  logAudioDiag("remote_audio", "play() remoto…", { uid: String(uidForPlay) });
   const playedOk = await playRemoteAudioTrack(track, uidForPlay);
+  logAudioDiag("remote_audio", playedOk ? "play() OK" : "play() falhou", { uid: String(uidForPlay) });
   if (!playedOk) {
     lastRemoteAudioTrackByUid.delete(uidStr);
     remoteAudioLastPlayAtByUid.delete(uidStr);
@@ -1053,18 +1106,22 @@ async function connectAgora() {
   lastRemoteAudioTrackByUid.clear();
   clearRemoteAudioPublishDebouncers();
   resetCaeRemoteAudioState();
+  localRtcAudioPublishedToChannel = false;
 
   isConnectingAgora = true;
   connectAgoraBtnEl.disabled = true;
   const sessionId = sessionIdEl.value.trim();
+  const connectT0 = typeof performance !== "undefined" && performance.now ? performance.now() : 0;
   try {
     try {
       if (window.AgoraRTC && typeof AgoraRTC.setLogLevel === "function") {
-        // 0 = NONE no SDK Web — corta o flood de Agora-SDK [DEBUG]/[INFO] no console.
-        const lv =
-          typeof AgoraRTC.LOG_LEVEL === "object" && AgoraRTC.LOG_LEVEL.NONE !== undefined
-            ? AgoraRTC.LOG_LEVEL.NONE
-            : 0;
+        // SDK Web (ex. AgoraRTC_N): LOG_LEVEL.DEBUG=0 … NONE=4. Fallback 0 = máximo ruído no console.
+        const LL = AgoraRTC.LOG_LEVEL;
+        let lv = 4;
+        if (typeof LL === "object" && LL !== null) {
+          if (LL.NONE !== undefined) lv = LL.NONE;
+          else if (LL.ERROR !== undefined) lv = LL.ERROR;
+        }
         AgoraRTC.setLogLevel(lv);
       }
     } catch (_e) {
@@ -1080,6 +1137,7 @@ async function connectAgora() {
       }
       throw e;
     }
+    logAudioDiag("connect", "sessão/token backend OK", { ms: Math.round(performance.now() - connectT0) });
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     let lastVolumeLogTs = 0;
     try {
@@ -1140,11 +1198,15 @@ async function connectAgora() {
       log(`${t("logAgoraJoinHint")} ${joinErr?.message || joinErr}${code}`);
       throw joinErr;
     }
+    logAudioDiag("connect", "join RTC OK", { ms: Math.round(performance.now() - connectT0) });
     log(t("logAgoraStepMic"));
+    const tMic = performance.now();
     localTrack = await AgoraRTC.createMicrophoneAudioTrack();
-    log(t("logAgoraStepPublish"));
-    await agoraClient.publish([localTrack]);
-    // Mantém o microfone RTC fechado até o usuário iniciar captura explicitamente.
+    localRtcAudioPublishedToChannel = false;
+    logAudioDiag("connect", "track microfone criado (sem publish até PTT)", {
+      ms: Math.round(performance.now() - tMic),
+      acum_ms: Math.round(performance.now() - connectT0),
+    });
     await setRtcMicCaptureEnabled(false);
     isRtcConnected = true;
     setRtcStatus(true, `uid=${localRtcUid}`);
@@ -1174,7 +1236,7 @@ async function connectAgora() {
       if (caeActive) {
         log(t("logCaeActive"));
         log(t("logCaeSpeakHint"));
-        await fetchAndLogCaeVoiceSource(getBackendLangFromUi());
+        void fetchAndLogCaeVoiceSource(getBackendLangFromUi()).catch(() => {});
         scheduleCaeRemoteAudioWatchdog();
         const uidForSync = expectedCaeAgentUid;
         setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 0);
@@ -1190,6 +1252,7 @@ async function connectAgora() {
       log(`${t("logCaeFallback")} — ${caeErr?.message || caeErr || ""}`);
       refreshVoiceToggleButton();
     }
+    logAudioDiag("connect", "fluxo Conectar Agora concluído", { ms: Math.round(performance.now() - connectT0) });
   } finally {
     isConnectingAgora = false;
     connectAgoraBtnEl.disabled = false;
@@ -1343,26 +1406,35 @@ async function transcribeRecordedAudio(wavBlob) {
 
 async function startRecording() {
   if (isRecording) return;
-  await setRtcMicCaptureEnabled(true);
-  try {
-    const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
-    permission.getTracks().forEach((track) => track.stop());
-  } catch (err) {
-    throw new Error(`${t("logMicError")}: ${err.message}`);
+  if (isRtcConnected && agoraClient && localTrack) {
+    await setLocalRtcAudioUpstream(true);
   }
-  recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-  recordingContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  recordingSource = recordingContext.createMediaStreamSource(recordingStream);
-  recordingNode = recordingContext.createScriptProcessor(4096, 1, 1);
-  recordingChunks = [];
-  recordingNode.onaudioprocess = (event) => {
-    recordingChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
-  };
-  recordingSource.connect(recordingNode);
-  recordingNode.connect(recordingContext.destination);
-  isRecording = true;
-  setVoiceUiState("listening");
-  refreshVoiceToggleButton();
+  try {
+    await setRtcMicCaptureEnabled(true);
+    try {
+      const permission = await navigator.mediaDevices.getUserMedia({ audio: true });
+      permission.getTracks().forEach((track) => track.stop());
+    } catch (err) {
+      throw new Error(`${t("logMicError")}: ${err.message}`);
+    }
+    recordingStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    recordingContext = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+    recordingSource = recordingContext.createMediaStreamSource(recordingStream);
+    recordingNode = recordingContext.createScriptProcessor(4096, 1, 1);
+    recordingChunks = [];
+    recordingNode.onaudioprocess = (event) => {
+      recordingChunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+    };
+    recordingSource.connect(recordingNode);
+    recordingNode.connect(recordingContext.destination);
+    isRecording = true;
+    setVoiceUiState("listening");
+    refreshVoiceToggleButton();
+  } catch (err) {
+    await setRtcMicCaptureEnabled(false);
+    await setLocalRtcAudioUpstream(false);
+    throw err;
+  }
 }
 
 async function stopRecordingAndSend() {
@@ -1393,6 +1465,7 @@ async function stopRecordingAndSend() {
   recordingStream = null;
   recordingContext = null;
   await setRtcMicCaptureEnabled(false);
+  await setLocalRtcAudioUpstream(false);
   setVoiceUiState("thinking");
 
   const totalLength = recordingChunks.reduce((acc, item) => acc + item.length, 0);
@@ -1422,7 +1495,7 @@ async function interruptAgent() {
 
 async function pollVoiceState() {
   const sessionId = sessionIdEl.value.trim();
-  if (!sessionId) return;
+  if (!sessionId || !isRtcConnected) return;
   try {
     const response = await fetch(apiUrl(`/api/conversation/${sessionId}/voice/state`));
     if (!response.ok) return;
@@ -1523,7 +1596,7 @@ applyUiTranslations();
 addChatMessage("assistant", t("welcomeAssistant"));
 setInterval(() => {
   pollVoiceState();
-}, 2500);
+}, 5000);
 
 audioUnlockBtnEl?.addEventListener("click", () => {
   resumeAllRemoteAudio();
