@@ -21,8 +21,9 @@ let agoraAutoplayHooked = false;
  * entre eventos for < DEBOUNCE_MS. MAX_WAIT_MS força pelo menos uma aplicação periódica.
  * Não cancelar o timer em user-unpublished — senão o áudio nunca chega a tocar.
  */
-const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 40;
-const REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS = 100;
+/** Rajadas do CAE: um pouco mais de espera reduz subscribe/play em loop e cortes audíveis. */
+const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 100;
+const REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS = 220;
 let remoteAudioPublishDebounceTimers = new Map();
 /** Primeiro user-published do burst (por uid), para max-wait. */
 let remoteAudioPublishBurstStartTs = new Map();
@@ -107,6 +108,17 @@ function apiUrl(path) {
     .replace(/\/$/, "");
   const p = path.startsWith("/") ? path : `/${path}`;
   return `${base}${p}`;
+}
+
+/** Evita UI presa em «a carregar» se o backend ou a API Agora não responderem. */
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timerId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timerId);
+  }
 }
 
 const logEl = document.getElementById("log");
@@ -652,7 +664,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
-  const delaysMs = [0, 50, 100, 150];
+  const delaysMs = [0, 16, 48];
   let remote = pickUser();
   let track = remote?.audioTrack ?? user.audioTrack;
   for (let i = 0; !track && i < delaysMs.length; i += 1) {
@@ -870,24 +882,28 @@ async function signalInterrupt() {
 }
 
 async function getAgoraSession(sessionId) {
-  const response = await fetch(apiUrl(`/api/system/agora/session/${sessionId}`));
+  const response = await fetchWithTimeout(apiUrl(`/api/system/agora/session/${sessionId}`), {}, 30000);
   const text = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
   return parseJsonResponse(text, "Sessão Agora");
 }
 
 async function startCaeAgent(sessionId, channel, token, remoteUid) {
-  const response = await fetch(apiUrl("/api/cae/agent/start"), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      session_id: sessionId,
-      channel,
-      token,
-      remote_uid: String(remoteUid),
-      language: getBackendLangFromUi(),
-    }),
-  });
+  const response = await fetchWithTimeout(
+    apiUrl("/api/cae/agent/start"),
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        session_id: sessionId,
+        channel,
+        token,
+        remote_uid: String(remoteUid),
+        language: getBackendLangFromUi(),
+      }),
+    },
+    90000,
+  );
   const text = await response.text();
   if (!response.ok) throw new Error(parseHttpErrorBody(text, response.status));
   return parseJsonResponse(text, "CAE");
@@ -915,7 +931,15 @@ async function connectAgora() {
   const sessionId = sessionIdEl.value.trim();
   try {
     log(t("logAgoraStepSession"));
-    const data = await getAgoraSession(sessionId);
+    let data;
+    try {
+      data = await getAgoraSession(sessionId);
+    } catch (e) {
+      if (e && e.name === "AbortError") {
+        throw new Error("Sessão Agora: tempo limite (30s). O backend não respondeu a tempo.");
+      }
+      throw e;
+    }
     agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
     let lastVolumeLogTs = 0;
     try {
@@ -974,7 +998,17 @@ async function connectAgora() {
     setRtcStatus(true, `uid=${localRtcUid}`);
     log(`${t("logConnected")} ${data.channel}.`);
     try {
-      const cae = await startCaeAgent(sessionId, data.channel, data.token, localRtcUid);
+      let cae;
+      try {
+        cae = await startCaeAgent(sessionId, data.channel, data.token, localRtcUid);
+      } catch (e) {
+        if (e && e.name === "AbortError") {
+          throw new Error(
+            "CAE: tempo limite (90s) ao iniciar o agente. A API Agora ou o backend pode estar lenta; tente de novo.",
+          );
+        }
+        throw e;
+      }
       caeActive = cae?.started !== false;
       if (cae?.cae_tts) {
         log(`CAE TTS (backend): ${JSON.stringify(cae.cae_tts)}`);
@@ -1013,80 +1047,97 @@ async function sendMessage(message) {
   const userId = userIdEl.value.trim();
   setVoiceUiState("thinking");
 
-  const response = await fetch(apiUrl(`/api/conversation/${sessionId}/message/stream`), {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ message, user_id: userId, stream: true }),
-  });
-  if (!response.ok) {
-    const errText = await response.text();
-    throw new Error(parseHttpErrorBody(errText, response.status));
-  }
-
-  const streamBubble = createStreamingAssistantMessage();
-  const reader = response.body?.getReader();
-  if (!reader) throw new Error("Streaming body unavailable.");
-
-  const decoder = new TextDecoder();
-  let buffer = "";
-  let finalPayload = null;
-
-  const consumeSseBuffer = () => {
-    if (buffer.length >= 32 && looksLikeHtmlPayload(buffer)) {
-      throw new Error(parseHttpErrorBody(buffer, response.status));
-    }
-    const events = buffer.split("\n\n");
-    buffer = events.pop() || "";
-    for (const eventChunk of events) {
-      const line = eventChunk.split("\n").find((part) => part.startsWith("data: "));
-      if (!line) continue;
-      let payload;
-      try {
-        payload = JSON.parse(line.slice(6).trimStart());
-      } catch (_e) {
-        continue;
+  try {
+    let response;
+    try {
+      response = await fetchWithTimeout(
+        apiUrl(`/api/conversation/${sessionId}/message/stream`),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, user_id: userId, stream: true }),
+        },
+        120000,
+      );
+    } catch (err) {
+      if (err && err.name === "AbortError") {
+        throw new Error("Pedido excedeu o tempo limite (120s). Verifique o servidor e a rede.");
       }
-      if (payload.type === "chunk") {
-        streamBubble.append(payload.text);
-      } else if (payload.type === "final") {
-        finalPayload = payload.response;
-      }
+      throw err;
     }
-  };
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(parseHttpErrorBody(errText, response.status));
+    }
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
+    const streamBubble = createStreamingAssistantMessage();
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("Streaming body unavailable.");
+
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let finalPayload = null;
+
+    const consumeSseBuffer = () => {
+      if (buffer.length >= 32 && looksLikeHtmlPayload(buffer)) {
+        throw new Error(parseHttpErrorBody(buffer, response.status));
+      }
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+      for (const eventChunk of events) {
+        const line = eventChunk.split("\n").find((part) => part.startsWith("data: "));
+        if (!line) continue;
+        let payload;
+        try {
+          payload = JSON.parse(line.slice(6).trimStart());
+        } catch (_e) {
+          continue;
+        }
+        if (payload.type === "chunk") {
+          streamBubble.append(payload.text);
+        } else if (payload.type === "final") {
+          finalPayload = payload.response;
+        }
+      }
+    };
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      consumeSseBuffer();
+    }
+    buffer += decoder.decode();
     consumeSseBuffer();
-  }
-  buffer += decoder.decode();
-  consumeSseBuffer();
-  if (!finalPayload && buffer.trim()) {
-    const line = buffer.split("\n").find((part) => part.startsWith("data: "));
-    if (line) {
-      try {
-        const payload = JSON.parse(line.replace(/^data:\s*/, ""));
-        if (payload.type === "final") finalPayload = payload.response;
-      } catch (_e) {}
+    if (!finalPayload && buffer.trim()) {
+      const line = buffer.split("\n").find((part) => part.startsWith("data: "));
+      if (line) {
+        try {
+          const payload = JSON.parse(line.replace(/^data:\s*/, ""));
+          if (payload.type === "final") finalPayload = payload.response;
+        } catch (_e) {}
+      }
     }
-  }
 
-  if (!finalPayload) {
-    if (looksLikeHtmlPayload(buffer)) throw new Error(parseHttpErrorBody(buffer, response.status));
-    throw new Error("Final payload missing.");
-  }
+    if (!finalPayload) {
+      if (looksLikeHtmlPayload(buffer)) throw new Error(parseHttpErrorBody(buffer, response.status));
+      throw new Error("Final payload missing.");
+    }
 
-  currentLanguage = finalPayload.language === "en" ? "en-US" : finalPayload.language === "es" ? "es-ES" : "pt-BR";
-  streamBubble.set(finalPayload.response_text);
-  setContextState({
-    sessionId: finalPayload.session_id || sessionId,
-    intent: finalPayload.intent,
-    needsConfirmation: finalPayload.needs_confirmation,
-    actionExecuted: finalPayload.action_executed,
-  });
-  renderProactiveSuggestions(finalPayload.proactive_suggestions || []);
-  renderAgentTrace(finalPayload.trace || null);
+    currentLanguage = finalPayload.language === "en" ? "en-US" : finalPayload.language === "es" ? "es-ES" : "pt-BR";
+    streamBubble.set(finalPayload.response_text);
+    setContextState({
+      sessionId: finalPayload.session_id || sessionId,
+      intent: finalPayload.intent,
+      needsConfirmation: finalPayload.needs_confirmation,
+      actionExecuted: finalPayload.action_executed,
+    });
+    renderProactiveSuggestions(finalPayload.proactive_suggestions || []);
+    renderAgentTrace(finalPayload.trace || null);
+  } catch (err) {
+    if (!isRecording) setVoiceUiState("idle");
+    throw err;
+  }
   if (!isRecording) setVoiceUiState("idle");
 }
 
