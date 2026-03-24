@@ -105,6 +105,12 @@ class CAEService:
             channel,
         )
 
+        tts_cfg = self._build_tts_config(language)
+        logger.info(
+            "CAE join properties.tts efectivo (sem segredos): %s",
+            self._tts_config_to_public(tts_cfg),
+        )
+
         properties: dict[str, Any] = {
             "channel": channel,
             "token": agent_token,
@@ -117,7 +123,7 @@ class CAEService:
                 "vendor": "ares",
                 "params": {},
             },
-            "tts": self._build_tts_config(language),
+            "tts": tts_cfg,
             "advanced_features": {
                 "enable_rtm": False,
                 "enable_tools": settings.agora_cae_enable_tools,
@@ -157,32 +163,33 @@ class CAEService:
 
         return {"name": name, "properties": properties}
 
+    def _tts_config_to_public(self, tts_cfg: dict[str, Any]) -> dict[str, Any]:
+        """Mesmos campos que vao no join ao CAE, sem api_key/key (segredo)."""
+        vendor = (tts_cfg.get("vendor") or "").lower()
+        p = tts_cfg.get("params") or {}
+        out: dict[str, Any] = {"pipeline": "cae_tts", "vendor": vendor}
+        if vendor == "openai":
+            out["model"] = p.get("model")
+            out["voice"] = p.get("voice")
+        elif vendor == "elevenlabs":
+            out["model_id"] = p.get("model_id")
+            out["voice_id"] = p.get("voice_id")
+        elif vendor == "microsoft":
+            out["region"] = p.get("region")
+            out["voice_name"] = p.get("voice_name")
+        return out
+
     def describe_tts_public(self, language: str) -> dict[str, Any]:
         """
-        Resumo seguro (sem chaves) do TTS do CAE para logs e respostas de API.
-        A sintese de voz do agente e feita pela Agora CAE conforme este vendor.
+        Resumo seguro alinhado com o bloco real `properties.tts` enviado ao CAE.
+        Se ouvir voz feminina em pt-BR e esperava ElevenLabs masculino, veja `vendor`:
+        microsoft usa pt-BR-FranciscaNeural (feminina) por defeito neste projeto.
         """
-        vendor = settings.agora_cae_tts_vendor.lower().strip()
-        if vendor == "openai":
-            return {
-                "pipeline": "cae_tts",
-                "vendor": "openai",
-                "model": settings.agora_cae_tts_openai_model,
-                "voice": settings.agora_cae_tts_openai_voice,
-            }
-        if vendor == "elevenlabs":
-            return {
-                "pipeline": "cae_tts",
-                "vendor": "elevenlabs",
-                "model_id": settings.agora_cae_tts_elevenlabs_model_id,
-                "voice_id": settings.agora_cae_tts_elevenlabs_voice_id,
-            }
-        return {
-            "pipeline": "cae_tts",
-            "vendor": "microsoft",
-            "region": settings.agora_cae_tts_azure_region,
-            "voice_name": "pt-BR-FranciscaNeural" if language.startswith("pt") else "en-US-JennyNeural",
-        }
+        try:
+            cfg = self._build_tts_config(language)
+        except RuntimeError as exc:
+            return {"pipeline": "cae_tts", "error": str(exc)}
+        return self._tts_config_to_public(cfg)
 
     def _llm_voice_output_and_greeting(self, language: str) -> dict[str, Any]:
         """
