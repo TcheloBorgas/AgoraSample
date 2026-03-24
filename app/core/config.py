@@ -48,6 +48,8 @@ class Settings(BaseSettings):
     agora_cae_tts_openai_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_OPENAI_KEY")
     agora_cae_tts_openai_model: str = Field(default="gpt-4o-mini-tts", validation_alias="AGORA_CAE_TTS_OPENAI_MODEL")
     agora_cae_tts_openai_voice: str = Field(default="coral", validation_alias="AGORA_CAE_TTS_OPENAI_VOICE")
+    # Velocidade da fala no TTS OpenAI (CAE join params.speed; ex. 1.25 mais rápido que 1.0).
+    agora_cae_tts_openai_speed: float = Field(default=1.25, validation_alias="AGORA_CAE_TTS_OPENAI_SPEED")
     agora_cae_tts_elevenlabs_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_ELEVENLABS_KEY")
     agora_cae_tts_elevenlabs_voice_id: str = Field(default="E93wW3dwK0ZM8f9ToeUL", validation_alias="AGORA_CAE_TTS_ELEVENLABS_VOICE_ID")
     agora_cae_tts_elevenlabs_model_id: str = Field(default="eleven_flash_v2_5", validation_alias="AGORA_CAE_TTS_ELEVENLABS_MODEL_ID")

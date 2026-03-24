@@ -123,9 +123,10 @@ class CAEService:
             p = tts_cfg.get("params") or {}
             oa_ok = bool((p.get("api_key") or "").strip())
             logger.info(
-                "CAE join OpenAI TTS: model=%s voice=%s key_configurada=%s (docs Agora: base_url + api_key no join).",
+                "CAE join OpenAI TTS: model=%s voice=%s speed=%s key_configurada=%s (docs Agora: base_url + api_key no join).",
                 p.get("model"),
                 p.get("voice"),
+                p.get("speed"),
                 oa_ok,
             )
         elif tts_vendor == "elevenlabs":
@@ -211,6 +212,7 @@ class CAEService:
         if vendor == "openai":
             out["model"] = p.get("model")
             out["voice"] = p.get("voice")
+            out["speed"] = p.get("speed")
         elif vendor == "elevenlabs":
             out["model_id"] = p.get("model_id")
             out["voice_id"] = p.get("voice_id")
@@ -322,6 +324,12 @@ class CAEService:
                 )
             model = (settings.agora_cae_tts_openai_model or "").strip() or "gpt-4o-mini-tts"
             voice = (settings.agora_cae_tts_openai_voice or "").strip() or "coral"
+            try:
+                spd = float(settings.agora_cae_tts_openai_speed)
+            except (TypeError, ValueError):
+                spd = 1.0
+            if spd <= 0:
+                spd = 1.0
             return {
                 "vendor": "openai",
                 "params": {
@@ -329,7 +337,7 @@ class CAEService:
                     "api_key": api_key,
                     "model": model,
                     "voice": voice,
-                    "speed": 1,
+                    "speed": spd,
                 },
             }
 
