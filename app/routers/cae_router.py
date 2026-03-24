@@ -153,7 +153,11 @@ async def start_cae_agent(
     service: CAEService = Depends(get_cae_service),
 ):
     if not settings.agora_cae_enabled:
-        return {"started": False, "reason": "cae_disabled", "message": "CAE desabilitado no .env. Usando fluxo local com Ollama."}
+        return {
+            "started": False,
+            "reason": "cae_disabled",
+            "message": "Erro: CAE desativado (AGORA_CAE_ENABLED=false). O agente conversacional Agora não será iniciado.",
+        }
     try:
         started = await service.start_agent_for_session(
             session_id=payload.session_id,
@@ -324,9 +328,12 @@ async def cae_llm_callback(
                 }
             if not (user_text or "").strip():
                 # ASR vazio: não inventar frase que o classificador interpreta como mudança de idioma (ex.: "português" → set_language).
-                out_empty = "Não ouvi bem desta vez. Pode repetir em uma frase?"
+                out_empty = (
+                    "Erro: o texto do utilizador chegou vazio ao callback do LLM (ASR sem transcrição ou payload sem mensagem). "
+                    "Repita a frase ou verifique o microfone/canal de áudio."
+                )
                 if _should_emit_log(f"cae_llm_empty_asr:{session_id}", window_sec=15.0):
-                    logger.warning("CAE_LLM texto de user vazio (ASR); resposta fixa sem handle_message.")
+                    logger.warning("CAE_LLM texto de user vazio (ASR); resposta de erro sem handle_message.")
                 stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
                 include_usage = bool(stream_opts.get("include_usage"))
                 if _wants_streaming_llm(payload):
@@ -374,7 +381,8 @@ async def cae_llm_callback(
                     result.intent,
                 )
                 out_text = (
-                    "Desculpe, não consegui gerar uma resposta agora. Pode repetir em uma frase o que deseja?"
+                    "Erro: o assistente devolveu `response_text` vazio após processar a mensagem "
+                    f"(intent={result.intent}). O fluxo no servidor não produziu texto para o TTS."
                 )
 
             if _looks_like_cae_failure_tts(out_text):
@@ -525,7 +533,7 @@ def _extract_user_text(payload: dict[str, Any]) -> str:
                         if isinstance(txt, str) and txt.strip():
                             return txt
 
-    # Fallback: último texto de usuário não-vazio.
+    # Último texto de utilizador não vazio (sem turn_id coincidente).
     for message in reversed(messages):
         if message.get("role") != "user":
             continue

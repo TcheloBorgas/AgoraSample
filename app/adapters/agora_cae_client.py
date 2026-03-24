@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import logging
+import random
 from typing import Any
 
 import httpx
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 class AgoraConversationalAIClient:
@@ -27,23 +32,77 @@ class AgoraConversationalAIClient:
         headers = {"Content-Type": "application/json", **self._auth_header()}
         timeout = httpx.Timeout(connect=15.0, read=60.0, write=30.0, pool=30.0)
 
+        max_attempts = 8
+        base_delay = 1.2
         last_error: Exception | None = None
-        for _attempt in range(2):
+
+        for attempt in range(max_attempts):
             try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     response = await client.post(url, json=payload, headers=headers)
-                    if response.status_code >= 300:
+                    code = response.status_code
+
+                    if code in (429, 503):
                         body = self._response_text(response)
-                        raise RuntimeError(f"Falha ao iniciar CAE ({response.status_code}): {body}")
+                        if attempt < max_attempts - 1:
+                            delay = min(22.0, base_delay * (2**attempt) + random.uniform(0, 0.45))
+                            logger.warning(
+                                "CAE join HTTP %s, nova tentativa em %.1fs (%s/%s): %s",
+                                code,
+                                delay,
+                                attempt + 1,
+                                max_attempts,
+                                body[:240],
+                            )
+                            await asyncio.sleep(delay)
+                            continue
+                        raise RuntimeError(f"Falha ao iniciar CAE ({code}): {body}")
+
+                    if code >= 300:
+                        body = self._response_text(response)
+                        raise RuntimeError(f"Falha ao iniciar CAE ({code}): {body}")
+
                     return response.json()
+
             except httpx.ReadTimeout as exc:
                 last_error = exc
+                if attempt < max_attempts - 1:
+                    delay = min(12.0, 1.0 * (2**attempt) + random.uniform(0, 0.3))
+                    logger.warning(
+                        "CAE join read timeout, nova tentativa em %.1fs (%s/%s)",
+                        delay,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
             except httpx.TimeoutException as exc:
                 last_error = exc
+                if attempt < max_attempts - 1:
+                    delay = min(12.0, 1.0 * (2**attempt) + random.uniform(0, 0.3))
+                    logger.warning(
+                        "CAE join timeout, nova tentativa em %.1fs (%s/%s)",
+                        delay,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
             except httpx.RequestError as exc:
                 last_error = exc
+                if attempt < max_attempts - 1:
+                    delay = min(8.0, 0.8 * (2**attempt))
+                    logger.warning(
+                        "CAE join rede: %s; nova tentativa em %.1fs (%s/%s)",
+                        exc,
+                        delay,
+                        attempt + 1,
+                        max_attempts,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
 
-        if isinstance(last_error, httpx.ReadTimeout | httpx.TimeoutException):
+        if isinstance(last_error, (httpx.ReadTimeout, httpx.TimeoutException)):
             raise RuntimeError(
                 "Timeout ao iniciar CAE na API da Agora. Verifique conectividade externa e tente novamente."
             ) from last_error

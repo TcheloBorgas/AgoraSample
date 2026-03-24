@@ -174,13 +174,13 @@ class ConversationService:
                         )
                     elif intent_result.intent == "unknown":
                         text = self.language.in_language(
-                            "Não entendi. Para confirmar esta reunião diga sim ou não. "
-                            "Se quiser mudar horário ou título, diga o novo valor.",
-                            "I did not understand. Say yes or no to confirm. "
-                            "To change the time or title, say the new details.",
+                            "Erro: com confirmação de reunião pendente, a mensagem não foi reconhecida como sim, não ou revisão do rascunho. "
+                            "Diga explicitamente «sim» ou «não», ou indique o campo a alterar (horário, título, etc.).",
+                            "Error: while a meeting confirmation is pending, your message was not recognized as yes, no, or a draft change. "
+                            "Say explicitly «yes» or «no», or state which field to change (time, title, etc.).",
                             state.language,
-                            es_text="No entendí. Di sí o no para confirmar. "
-                            "Si quieres cambiar la hora o el título, dilo.",
+                            es_text="Error: con confirmación de reunión pendiente, el mensaje no se reconoció como sí, no o cambio del borrador. "
+                            "Diga explícitamente «sí» o «no», o qué campo cambiar (hora, título, etc.).",
                         )
                         self.trace_service.step(
                             trace,
@@ -335,7 +335,12 @@ class ConversationService:
                 raw_message,
                 use_cloud_fallback_for_unknown=use_cloud_fallback_for_unknown,
             )
-            self.trace_service.step(trace, "fallback_unknown", "Unknown intent handled by fallback/LLM.", status="warning")
+            self.trace_service.step(
+                trace,
+                "fallback_unknown",
+                "Intent unknown: user-facing error message returned (no successful classification).",
+                status="warning",
+            )
             return self._build_response(state, intent, text, False, False)
 
         if intent == "set_language":
@@ -375,9 +380,10 @@ class ConversationService:
                 last = self.memory.get_last_meeting_pattern(user_id)
                 if not last:
                     text = self.language.in_language(
-                        "Ainda nao encontrei uma reuniao anterior para repetir. Se quiser, eu posso criar uma nova do zero.",
-                        "I could not find a previous meeting to repeat yet. If you want, I can create a new one from scratch.",
+                        "Erro: não há padrão de reunião anterior guardado para repetir (memória vazia ou sessão nova).",
+                        "Error: no saved previous meeting pattern to repeat (empty memory or new session).",
                         state.language,
+                        es_text="Error: no hay patrón de reunión anterior guardado para repetir (memoria vacía o sesión nueva).",
                     )
                     self.trace_service.step(trace, "validate_context", "No meeting pattern available to repeat.", status="warning")
                     return self._build_response(state, intent, text, False, False)
@@ -420,9 +426,13 @@ class ConversationService:
                 target = self.scheduler.find_target_event(entities.get("target_hint"), around=entities.get("start"))
                 if not target:
                     text = self.language.in_language(
-                        "Nao encontrei qual reuniao voce quer reagendar. Pode me dizer o titulo, horario ou participantes?",
-                        "I could not identify which meeting you want to reschedule. Please tell me the title, time, or participants.",
+                        "Erro: não foi possível identificar qual reunião reagendar a partir do texto (sem correspondência no calendário). "
+                        "Indique título, horário ou participantes com mais precisão.",
+                        "Error: could not identify which meeting to reschedule from your text (no calendar match). "
+                        "Provide title, time, or participants more precisely.",
                         state.language,
+                        es_text="Error: no se pudo identificar qué reunión reagendar (sin coincidencia en el calendario). "
+                        "Indique título, hora o participantes con más precisión.",
                     )
                     self.trace_service.step(trace, "validate_context", "Could not identify target meeting for reschedule.", status="warning")
                     return self._build_response(state, intent, text, False, False)
@@ -446,9 +456,10 @@ class ConversationService:
                 target = self.scheduler.find_target_event(entities.get("target_hint"), around=entities.get("start"))
                 if not target:
                     text = self.language.in_language(
-                        "Nao encontrei qual reuniao voce quer cancelar. Pode citar horario, titulo ou participantes?",
-                        "I could not identify which meeting you want to cancel. Please mention time, title, or participants.",
+                        "Erro: não foi possível identificar qual reunião cancelar a partir do texto (sem correspondência no calendário).",
+                        "Error: could not identify which meeting to cancel from your text (no calendar match).",
                         state.language,
+                        es_text="Error: no se pudo identificar qué reunión cancelar (sin coincidencia en el calendario).",
                     )
                     self.trace_service.step(trace, "validate_context", "Could not identify target meeting for cancellation.", status="warning")
                     return self._build_response(state, intent, text, False, False)
@@ -471,13 +482,19 @@ class ConversationService:
             self.actions.log(state.session_id, user_id, intent, "pre_action", entities, False, str(exc))
             self.trace_service.step(trace, "execute_tool", "Failed while preparing action.", status="error", data={"error": str(exc)})
             text = self.language.in_language(
-                f"Tive uma falha ao preparar essa acao: {self._humanize_error(exc, state.language)}",
-                f"I hit an integration issue while preparing this action: {self._humanize_error(exc, state.language)}",
+                f"Erro: falha ao preparar ou executar a ação pedida: {self._humanize_error(exc, state.language)}",
+                f"Error: failed while preparing or executing the requested action: {self._humanize_error(exc, state.language)}",
                 state.language,
+                es_text=f"Error: fallo al preparar o ejecutar la acción: {self._humanize_error(exc, state.language)}",
             )
             return self._build_response(state, intent, text, False, False)
 
-        text = self.fallback.unknown_intent(state.language)
+        text = self.language.in_language(
+            f"Erro: intenção «{intent}» não tem ramo de tratamento implementado no servidor.",
+            f"Error: intent «{intent}» has no handler implemented on the server.",
+            state.language,
+            es_text=f"Error: la intención «{intent}» no tiene manejador en el servidor.",
+        )
         return self._build_response(state, intent, text, False, False)
 
     def _smart_unknown_reply(
@@ -495,20 +512,33 @@ class ConversationService:
                 out[:200],
             )
             return out
-        if use_cloud_fallback_for_unknown and self.openai_compat_llm is not None and OpenAICompatibleLlmClient.is_configured():
+        ollama_ok = use_cloud_fallback_for_unknown and settings.ollama_enabled and self.ollama is not None
+        openai_ok = (
+            use_cloud_fallback_for_unknown
+            and self.openai_compat_llm is not None
+            and OpenAICompatibleLlmClient.is_configured()
+        )
+        if openai_ok:
             try:
                 result = self.openai_compat_llm.chat_reply_sync(prompt, language=language)
                 if result:
                     return result
-            except Exception:  # noqa: BLE001
-                logger.debug("Fallback cloud LLM falhou; tentando Ollama ou resposta fixa.", exc_info=True)
+                logger.warning("OpenAI-compat LLM devolveu resposta vazia para intent unknown.")
+                if not ollama_ok:
+                    return self.fallback.llm_empty_response_error(language, "OpenAI-compat")
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("OpenAI-compat LLM falhou; tentando Ollama ou erro final.", exc_info=True)
+                if not ollama_ok:
+                    return self.fallback.llm_call_failed_error(language, "OpenAI-compat", exc)
         if use_cloud_fallback_for_unknown and settings.ollama_enabled and self.ollama is not None:
             try:
                 result = self.ollama.chat_reply_sync(prompt, language=language)
                 if result:
                     return result
-            except Exception:  # noqa: BLE001
-                pass
+                logger.warning("Ollama devolveu resposta vazia para intent unknown.")
+                return self.fallback.llm_empty_response_error(language, "Ollama")
+            except Exception as exc:  # noqa: BLE001
+                return self.fallback.llm_call_failed_error(language, "Ollama", exc)
         return self.fallback.unknown_intent(language)
 
     def _reparse_as_new_intent(
@@ -552,10 +582,10 @@ class ConversationService:
             )
 
         text = self.language.in_language(
-            "Não há nenhuma operação pendente para confirmar. Diga o que deseja: criar, consultar, reagendar ou cancelar uma reunião.",
-            "There is no pending operation to confirm. Tell me what you'd like to do: create, list, reschedule or cancel a meeting.",
+            "Erro: não há operação pendente de confirmação no calendário e a mensagem não foi reclassificada como nova intenção.",
+            "Error: no pending calendar confirmation and the message was not reclassified as a new intent.",
             state.language,
-            es_text="No hay ninguna operación pendiente para confirmar. Dime qué deseas: crear, consultar, reagendar o cancelar una reunión.",
+            es_text="Error: no hay operación de confirmación pendiente y el mensaje no se reclasificó como nueva intención.",
         )
         return self._build_response(state, "unknown", text, False, False)
 
@@ -580,9 +610,10 @@ class ConversationService:
 
         if detected_intent != "confirm_yes":
             text = self.language.in_language(
-                "Para seguir com seguranca, me confirme com 'sim' ou 'nao'.",
-                "To proceed safely, please confirm with 'yes' or 'no'.",
+                "Erro: com confirmação pendente, a resposta tem de ser explicitamente «sim» ou «não».",
+                "Error: while confirmation is pending, the reply must be explicitly «yes» or «no».",
                 state.language,
+                es_text="Error: con confirmación pendiente, la respuesta debe ser explícitamente «sí» o «no».",
             )
             self.trace_service.step(trace, "confirm_action", "User response was not a valid confirmation.", status="warning")
             return self._build_response(state, detected_intent, text, True, False)
@@ -622,9 +653,10 @@ class ConversationService:
                 if not exec_result.success:
                     sug = self._format_suggestions(suggestions, state.language)
                     text = self.language.in_language(
-                        f"Encontrei conflito nesse horario. Posso usar uma destas sugestoes: {sug}",
-                        f"There is a scheduling conflict at that time. I can suggest: {sug}",
+                        f"Erro: conflito de agenda ao criar o evento neste horário. Sugestões alternativas: {sug}",
+                        f"Error: calendar conflict when creating the event at that time. Alternative suggestions: {sug}",
                         state.language,
+                        es_text=f"Error: conflicto de agenda al crear el evento. Sugerencias: {sug}",
                     )
                     self.actions.log(state.session_id, user_id, "create_meeting", "create", payload, False, "conflict")
                     return self._build_response(state, "create_meeting", text, False, False, {"suggestions": sug})
@@ -681,9 +713,10 @@ class ConversationService:
                 if not exec_result.success:
                     sug = self._format_suggestions(suggestions, state.language)
                     text = self.language.in_language(
-                        f"Esse novo horario tambem conflita. Sugestoes disponiveis: {sug}",
-                        f"The new time also conflicts. Available suggestions: {sug}",
+                        f"Erro: o reagendamento falhou por conflito de agenda no novo horário. Sugestões: {sug}",
+                        f"Error: reschedule failed due to a calendar conflict at the new time. Suggestions: {sug}",
                         state.language,
+                        es_text=f"Error: fallo al reagendar por conflicto en la nueva hora. Sugerencias: {sug}",
                     )
                     self.actions.log(state.session_id, user_id, "reschedule_meeting", "reschedule", payload, False, "conflict")
                     return self._build_response(state, "reschedule_meeting", text, False, False, {"suggestions": sug})
@@ -722,9 +755,10 @@ class ConversationService:
                 )
 
             text = self.language.in_language(
-                "Nao encontrei nenhuma acao pendente para confirmar.",
-                "I could not find any pending action to confirm.",
+                "Erro: estado de confirmação inconsistente — ação pendente desconhecida ou já limpa.",
+                "Error: inconsistent confirmation state — unknown or cleared pending action.",
                 state.language,
+                es_text="Error: estado de confirmación inconsistente — acción pendiente desconocida.",
             )
             return self._build_response(state, detected_intent, text, False, False)
         except Exception as exc:  # noqa: BLE001
@@ -732,9 +766,10 @@ class ConversationService:
             self.actions.log(state.session_id, user_id, detected_intent, action or "unknown", payload, False, str(exc))
             self.trace_service.step(trace, "execute_tool", "Tool execution failed.", status="error", data={"error": str(exc)})
             text = self.language.in_language(
-                f"Eu nao consegui concluir essa acao agora: {self._humanize_error(exc, state.language)}",
-                f"I could not complete this action right now: {self._humanize_error(exc, state.language)}",
+                f"Erro: falha ao executar a ação confirmada: {self._humanize_error(exc, state.language)}",
+                f"Error: failed to execute the confirmed action: {self._humanize_error(exc, state.language)}",
                 state.language,
+                es_text=f"Error: fallo al ejecutar la acción confirmada: {self._humanize_error(exc, state.language)}",
             )
             return self._build_response(state, detected_intent, text, False, False)
 

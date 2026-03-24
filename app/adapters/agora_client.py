@@ -1,7 +1,38 @@
+import re
 import time
 from dataclasses import dataclass
 
 from app.core.config import settings
+
+# Limite do nome de canal Agora (bytes/caracteres conservador)
+_AGORA_CHANNEL_MAX_LEN = 64
+
+
+def _sanitize_session_id_for_channel(session_id: str) -> str:
+    raw = (session_id or "").strip() or "default"
+    safe = re.sub(r"[^a-zA-Z0-9_-]", "-", raw)
+    return safe.strip("-") or "default"
+
+
+def build_rtc_channel_name(session_id: str) -> str:
+    """
+    Um canal RTC por sessão: evita colisão de agentes/uid 20001 entre utilizadores
+    quando AGORA_FIXED_CHANNEL era um nome único (ex.: «Agora») para todos.
+    Formato: {prefixo ou fixo}-{session_id_sanitizado}, truncado a 64 chars.
+    """
+    sid = _sanitize_session_id_for_channel(session_id)
+    base = (settings.agora_fixed_channel or settings.agora_channel_prefix or "assistant-voice").strip()
+    if not base:
+        base = "assistant-voice"
+    raw = f"{base}-{sid}"
+    if len(raw) <= _AGORA_CHANNEL_MAX_LEN:
+        return raw
+    # Truncar mantendo sufixo (session) para unicidade
+    suffix = f"-{sid}"
+    max_base = _AGORA_CHANNEL_MAX_LEN - len(suffix)
+    if max_base < 8:
+        return raw[:_AGORA_CHANNEL_MAX_LEN]
+    return f"{base[:max_base]}{suffix}"
 
 
 @dataclass
@@ -54,7 +85,7 @@ class AgoraClient:
         if not settings.agora_app_id:
             raise RuntimeError("AGORA_APP_ID nao configurado")
 
-        channel = settings.agora_fixed_channel or f"{settings.agora_channel_prefix}-{session_id}"
+        channel = build_rtc_channel_name(session_id)
         uid = settings.agora_uid
         if uid <= 0:
             uid = 10001

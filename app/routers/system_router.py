@@ -55,7 +55,11 @@ async def transcribe_audio(
         text = stt.transcribe_wav(data, language_hint=language)
         return {"text": text, "language": language}
     except sr.UnknownValueError:
-        return {"text": "", "language": language, "reason": "unintelligible"}
+        return {
+            "text": "Erro: o serviço de reconhecimento de voz não conseguiu extrair texto do áudio (sinal ilegível ou demasiado curto).",
+            "language": language,
+            "reason": "unintelligible",
+        }
     except sr.RequestError as exc:
         raise HTTPException(status_code=502, detail=f"Falha no provedor STT: {exc}") from exc
     except Exception as exc:  # noqa: BLE001
@@ -84,8 +88,12 @@ def get_agora_debug(agora: AgoraClient = Depends(get_agora_client)):
             warnings.append("UID invalido, use inteiro >= 0.")
         if not token_ok:
             warnings.append("Token vazio/curto; defina AGORA_APP_CERTIFICATE ou AGORA_TEMP_TOKEN.")
-        if session.channel != (settings.agora_fixed_channel or session.channel):
-            warnings.append("Canal efetivo diferente do canal fixo esperado.")
+        fixed = (settings.agora_fixed_channel or "").strip()
+        if fixed and not (session.channel == fixed or session.channel.startswith(f"{fixed}-")):
+            warnings.append(
+                f"Canal efetivo {session.channel!r} deveria usar o prefixo fixo {fixed!r} "
+                "(formato esperado: {fixo}-{session_id})."
+            )
 
         return {
             "ok": app_id_ok and channel_ok and uid_ok and token_ok,

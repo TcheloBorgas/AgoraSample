@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     agora_app_certificate: str = Field(default="", validation_alias="AGORA_APP_CERTIFICATE")
     agora_temp_token: str = ""
     agora_channel_prefix: str = "assistant-voice"
+    # Se vazio: canal = «{prefix}-{session_id}». Se preenchido: «{fixo}-{session_id}» (nunca um único canal global).
     agora_fixed_channel: str = ""
     agora_uid: int = 0
     agora_cae_customer_id: str = Field(default="", validation_alias="AGORA_CAE_CUSTOMER_ID")
@@ -48,7 +49,7 @@ class Settings(BaseSettings):
     agora_cae_tts_openai_model: str = Field(default="gpt-4o-mini-tts", validation_alias="AGORA_CAE_TTS_OPENAI_MODEL")
     agora_cae_tts_openai_voice: str = Field(default="coral", validation_alias="AGORA_CAE_TTS_OPENAI_VOICE")
     agora_cae_tts_elevenlabs_key: str = Field(default="", validation_alias="AGORA_CAE_TTS_ELEVENLABS_KEY")
-    agora_cae_tts_elevenlabs_voice_id: str = Field(default="pNInz6obpgDQGcFmaJgB", validation_alias="AGORA_CAE_TTS_ELEVENLABS_VOICE_ID")
+    agora_cae_tts_elevenlabs_voice_id: str = Field(default="E93wW3dwK0ZM8f9ToeUL", validation_alias="AGORA_CAE_TTS_ELEVENLABS_VOICE_ID")
     agora_cae_tts_elevenlabs_model_id: str = Field(default="eleven_flash_v2_5", validation_alias="AGORA_CAE_TTS_ELEVENLABS_MODEL_ID")
     # Segundos: após o utilizador em remote_rtc_uids sair do canal, o agente CAE encerra (0 = só manual). Ver docs Agora join idle_timeout.
     agora_cae_idle_timeout_seconds: int = Field(default=120, validation_alias="AGORA_CAE_IDLE_TIMEOUT_SECONDS")

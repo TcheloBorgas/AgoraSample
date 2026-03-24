@@ -201,7 +201,7 @@ class CAEService:
     def describe_tts_public(self, language: str) -> dict[str, Any]:
         """
         Resumo seguro alinhado com o bloco real `properties.tts` enviado ao CAE.
-        Genero da voz vem do `voice_id` ElevenLabs (AGORA_CAE_TTS_ELEVENLABS_VOICE_ID), nao do backend FastAPI.
+        Genero/timbre da voz vem do `voice_id` ElevenLabs (AGORA_CAE_TTS_ELEVENLABS_VOICE_ID), nao do sintetizador do FastAPI.
         """
         try:
             cfg = self._build_tts_config(language)

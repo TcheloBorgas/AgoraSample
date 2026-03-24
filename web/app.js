@@ -18,44 +18,30 @@ let lastRemoteAudioTrackByUid = new Map();
 /** Evita `play()` duplicado se o SDK repetir `user-published` para a mesma instância de track (referência). */
 let agoraAutoplayHooked = false;
 
-/**
- * CAE/TTS dispara user-published em rajada; trailing debounce sozinho nunca «descansa» se o intervalo
- * entre eventos for < DEBOUNCE_MS. MAX_WAIT_MS força pelo menos uma aplicação periódica.
- * Não cancelar o timer em user-unpublished — senão o áudio nunca chega a tocar.
- */
-/** Rajadas do CAE: um pouco mais de espera reduz subscribe/play em loop e cortes audíveis. */
-const REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS = 100;
-const REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS = 220;
-let remoteAudioPublishDebounceTimers = new Map();
-/** Primeiro user-published do burst (por uid), para max-wait. */
-let remoteAudioPublishBurstStartTs = new Map();
 /** Evita subscribe/play em rajada para o mesmo uid. */
 let remoteAudioSubscribeInFlightByUid = new Map();
 let remoteAudioLastSubscribeAtByUid = new Map();
 let remoteAudioLastPlayAtByUid = new Map();
+/** Após INVALID_REMOTE_USER / «not published», não martelar o SDK durante este período. */
+let remoteAudioSubscribeBackoffUntilByUid = new Map();
+const REMOTE_AUDIO_INVALID_SUBSCRIBE_BACKOFF_MS = 400;
+const REMOTE_AUDIO_SKIP_HAS_AUDIO_LOG_MS = 3500;
+let remoteAudioLastSkipHasAudioLogAtByUid = new Map();
+let remoteAudioLastInvalidSubscribeLogAtByUid = new Map();
+const REMOTE_AUDIO_INVALID_LOG_EVERY_MS = 4000;
 const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
 const REMOTE_AUDIO_MIN_REPLAY_INTERVAL_MS = 5000;
 const RTC_EVENT_LOG_THROTTLE_MS = 1500;
 const rtcAudioEventStatsByUid = new Map();
 
 function clearRemoteAudioPublishDebouncers() {
-  for (const tid of remoteAudioPublishDebounceTimers.values()) {
-    clearTimeout(tid);
-  }
-  remoteAudioPublishDebounceTimers.clear();
-  remoteAudioPublishBurstStartTs.clear();
   remoteAudioSubscribeInFlightByUid.clear();
   remoteAudioLastSubscribeAtByUid.clear();
   remoteAudioLastPlayAtByUid.clear();
+  remoteAudioSubscribeBackoffUntilByUid.clear();
+  remoteAudioLastSkipHasAudioLogAtByUid.clear();
+  remoteAudioLastInvalidSubscribeLogAtByUid.clear();
   rtcAudioEventStatsByUid.clear();
-}
-
-function cancelRemoteAudioPublishDebounce(uidStr) {
-  const tid = remoteAudioPublishDebounceTimers.get(uidStr);
-  if (tid) {
-    clearTimeout(tid);
-    remoteAudioPublishDebounceTimers.delete(uidStr);
-  }
 }
 
 function logRtcAudioEvent(uid, kind) {
@@ -88,34 +74,6 @@ function logRtcAudioEvent(uid, kind) {
     stat.lastLogAt = now;
   }
   rtcAudioEventStatsByUid.set(uidStr, stat);
-}
-
-function scheduleApplyRemoteUserAudio(uidStr) {
-  const now = Date.now();
-  if (!remoteAudioPublishBurstStartTs.has(uidStr)) {
-    remoteAudioPublishBurstStartTs.set(uidStr, now);
-  }
-  const burstStart = remoteAudioPublishBurstStartTs.get(uidStr);
-  const maxWaitElapsed = now - burstStart >= REMOTE_AUDIO_PUBLISH_MAX_WAIT_MS;
-
-  const run = () => {
-    remoteAudioPublishDebounceTimers.delete(uidStr);
-    remoteAudioPublishBurstStartTs.delete(uidStr);
-    logAudioDiag("debounce", "fim debounce → subscribe/play", { uid: uidStr });
-    applyRemoteUserAudioPublished(uidStr).catch((err) => {
-      log(`RTC áudio remoto (debounce): ${err?.message || err}`);
-    });
-  };
-
-  if (maxWaitElapsed) {
-    cancelRemoteAudioPublishDebounce(uidStr);
-    run();
-    return;
-  }
-
-  cancelRemoteAudioPublishDebounce(uidStr);
-  const timerId = setTimeout(run, REMOTE_AUDIO_PUBLISH_DEBOUNCE_MS);
-  remoteAudioPublishDebounceTimers.set(uidStr, timerId);
 }
 
 function stopRemoteAudioTrackIfAny(track) {
@@ -276,13 +234,13 @@ const UI_TEXTS = {
       "Voz CAE: sem premir o botão, o teu áudio não é publicado no RTC — o agente não ouve. Com o botão ativo, fala; o TTS do agente vem do CAE (ex. ElevenLabs). Chat/STT local só atualiza texto no servidor.",
     logCaeLocalRecord:
       "CAE ativo: captura local para STT no chat; o CAE ouve só enquanto o botão de voz está ligado (áudio RTC publicado).",
-    logCaeFallback: "CAE indisponível. Mantendo fluxo local com voz + chat.",
+    logCaeFallback:
+      "Erro: o agente CAE (Agora Conversational AI) não iniciou ou falhou. Chat/STT local pode continuar, mas não há TTS do CAE no RTC até o start corrigir.",
     logCaeRemoteAudioOk:
       "RTC: primeiro áudio publicado pelo agente CAE (uid=%s) — o browser deve reproduzir (ou pedir «Ativar áudio»).",
     logCaeNoRemoteAudioDiagnostic:
-      "RTC diagnóstico: após %TIME% s ainda não houve user-published de áudio do agente (uid esperado %UID%). " +
-      "Isto indica que o CAE não está a enviar TTS no canal (ou ainda não processou a sua fala no RTC). " +
-      "Fale no microfone; confira no Render logs do CAE, chaves TTS e consola Agora.",
+      "Erro (áudio RTC): após %TIME% s não houve «user-published» de áudio do agente CAE (uid esperado %UID%). " +
+      "Causas prováveis: CAE/TTS inativo, microfone não publicado no canal, ou falha Agora/ElevenLabs. Verifique logs do servidor e consola.",
     logAutoplayBlocked:
       "Autoplay bloqueado: o áudio do agente CAE chegou ao browser, mas o Chrome/Safari exigem um clique para tocar. Use «Ativar áudio do agente».",
     logAudioPlayFailed: "Falha ao iniciar reprodução do áudio remoto",
@@ -372,13 +330,13 @@ const UI_TEXTS = {
       "CAE: without the voice button, your audio is not on the channel. When on, speak; agent TTS comes from CAE (e.g. ElevenLabs). Local chat/STT only updates server text.",
     logCaeLocalRecord:
       "CAE active: local capture for chat STT; CAE listens only while the voice button is on.",
-    logCaeFallback: "CAE unavailable. Keeping local voice + chat flow.",
+    logCaeFallback:
+      "Error: CAE (Agora Conversational AI) did not start or failed. Local chat/STT may continue; CAE TTS on RTC is unavailable until start succeeds.",
     logCaeRemoteAudioOk:
       "RTC: first remote audio published by CAE agent (uid=%s) — browser should play (or use «Enable agent audio»).",
     logCaeNoRemoteAudioDiagnostic:
-      "RTC diagnostic: after %TIME% s still no user-published audio from agent (expected uid %UID%). " +
-      "The CAE is not sending TTS on the channel yet (or has not processed your RTC speech). " +
-      "Speak into the mic; check Render CAE logs, TTS keys, and Agora console.",
+      "Error (RTC audio): after %TIME% s there was no «user-published» audio from the CAE agent (expected uid %UID%). " +
+      "Likely causes: CAE/TTS inactive, mic not published to channel, or Agora/ElevenLabs failure. Check server logs and browser console.",
     logAutoplayBlocked:
       "Autoplay blocked: CAE agent audio arrived but the browser requires a click to play. Use «Enable agent audio».",
     logAudioPlayFailed: "Failed to start remote audio playback",
@@ -468,12 +426,13 @@ const UI_TEXTS = {
       "CAE: sin pulsar voz, tu audio no está en el canal. Con el botón activo, habla; el TTS del agente viene del CAE. El STT local solo actualiza texto en el servidor.",
     logCaeLocalRecord:
       "CAE activo: captura local para STT; el CAE escucha solo mientras el botón de voz está activo.",
-    logCaeFallback: "CAE no disponible. Manteniendo flujo local de voz + chat.",
+    logCaeFallback:
+      "Error: el agente CAE no se inició o falló. El chat/STT local puede seguir; no hay TTS del CAE en RTC hasta corregir el arranque.",
     logCaeRemoteAudioOk:
       "RTC: primer audio publicado por el agente CAE (uid=%s).",
     logCaeNoRemoteAudioDiagnostic:
-      "RTC diagnóstico: tras %TIME% s no hubo user-published de audio del agente (uid esperado %UID%). " +
-      "El CAE aún no envía TTS o no procesó tu voz en RTC. Habla al micrófono; revisa logs TTS y Agora.",
+      "Error (audio RTC): tras %TIME% s no hubo «user-published» de audio del agente CAE (uid esperado %UID%). " +
+      "Causas probables: CAE/TTS inactivo, micrófono no publicado en el canal, o fallo Agora/ElevenLabs. Revise logs del servidor y consola.",
     logAutoplayBlocked:
       "Autoplay bloqueado: el audio del agente CAE llegó, pero el navegador exige un clic. Usa «Activar audio del agente».",
     logAudioPlayFailed: "Error al reproducir audio remoto",
@@ -801,6 +760,10 @@ async function playRemoteAudioTrack(track, uid) {
  */
 async function applyRemoteUserAudioPublished(uidStr) {
   if (!agoraClient) return;
+  const backoffUntil = remoteAudioSubscribeBackoffUntilByUid.get(uidStr) || 0;
+  if (Date.now() < backoffUntil) {
+    return;
+  }
   const inFlight = remoteAudioSubscribeInFlightByUid.get(uidStr);
   if (inFlight) {
     await inFlight;
@@ -814,7 +777,14 @@ async function applyRemoteUserAudioPublished(uidStr) {
     logAudioDiag("remote_audio", "skip sem remote user", { uid: uidStr });
     return;
   }
-  // Não exigir hasAudio: com TTS em rajadas o CAE alterna publish e hasAudio fica false no debounce.
+  if (!user.hasAudio) {
+    const lastSkip = remoteAudioLastSkipHasAudioLogAtByUid.get(uidStr) || 0;
+    if (Date.now() - lastSkip >= REMOTE_AUDIO_SKIP_HAS_AUDIO_LOG_MS) {
+      remoteAudioLastSkipHasAudioLogAtByUid.set(uidStr, Date.now());
+      logAudioDiag("remote_audio", "skip sem hasAudio", { uid: uidStr });
+    }
+    return;
+  }
   const currentTrack = user.audioTrack;
   const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
   const now = Date.now();
@@ -832,8 +802,25 @@ async function applyRemoteUserAudioPublished(uidStr) {
     remoteAudioLastSubscribeAtByUid.set(uidStr, Date.now());
     logAudioDiag("remote_audio", "subscribe(audio) OK", { uid: uidStr });
   } catch (subErr) {
-    log(`RTC subscribe áudio: ${subErr?.message || subErr}`);
-    logAudioDiag("remote_audio", "subscribe FALHOU", { uid: uidStr, err: String(subErr?.message || subErr) });
+    const msg = String(subErr?.message || subErr);
+    const notPublished =
+      msg.includes("INVALID_REMOTE_USER") ||
+      msg.includes("not published") ||
+      msg.includes("NOT_PUBLISHED");
+    if (notPublished) {
+      remoteAudioSubscribeBackoffUntilByUid.set(uidStr, Date.now() + REMOTE_AUDIO_INVALID_SUBSCRIBE_BACKOFF_MS);
+      const lastInv = remoteAudioLastInvalidSubscribeLogAtByUid.get(uidStr) || 0;
+      if (Date.now() - lastInv >= REMOTE_AUDIO_INVALID_LOG_EVERY_MS) {
+        remoteAudioLastInvalidSubscribeLogAtByUid.set(uidStr, Date.now());
+        logAudioDiag("remote_audio", "subscribe adiado (remoto sem áudio publicado neste instante)", {
+          uid: uidStr,
+          err: msg,
+        });
+      }
+      return;
+    }
+    log(`RTC subscribe áudio: ${msg}`);
+    logAudioDiag("remote_audio", "subscribe FALHOU", { uid: uidStr, err: msg });
     return;
   }
   const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
@@ -1178,7 +1165,7 @@ async function connectAgora() {
     agoraClient.on("user-unpublished", (user, mediaType) => {
       if (mediaType !== "audio") return;
       const uidStr = String(user.uid);
-      remoteAudioPublishBurstStartTs.delete(uidStr);
+      remoteAudioSubscribeBackoffUntilByUid.delete(uidStr);
       logRtcAudioEvent(user.uid, "unpublished");
       lastRemoteAudioTrackByUid.delete(uidStr);
       remoteAudioLastSubscribeAtByUid.delete(uidStr);
@@ -1193,7 +1180,10 @@ async function connectAgora() {
         return;
       }
       logRtcAudioEvent(user.uid, "published");
-      scheduleApplyRemoteUserAudio(String(user.uid));
+      // Subscribe no mesmo tick do user-published (com hasAudio); debounce atrasava e batia em «not published».
+      void applyRemoteUserAudioPublished(String(user.uid)).catch((err) => {
+        log(`RTC áudio remoto (user-published): ${err?.message || err}`);
+      });
     });
     log(t("logAgoraStepJoin"));
     try {
