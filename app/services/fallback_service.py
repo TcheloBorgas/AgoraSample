@@ -132,16 +132,25 @@ class FallbackService:
                 return "Could you clarify what you would like to do with this meeting?"
             return "Pode detalhar um pouco mais o que deseja fazer com esta reunião?"
 
-        # Vários campos: um único pedido claro (ex.: horário já dito + falta nome/e-mail/assunto).
+        # Vários campos: tom natural (sem nomes técnicos de intenção).
         if len(fields) > 1:
             if language == "es":
                 need = _join_need_list(_missing_phrases_es(fields), "es")
-                return f"Para seguir con la intención «{intent}», aún necesito: {need}."
+                return (
+                    f"Perfecto. Para dejar la reunión registrada en el calendario, aún me falta: {need}. "
+                    "¿Puedes enviarlos en un mensaje?"
+                )
             if language == "en":
                 need = _join_need_list(_missing_phrases_en(fields), "en")
-                return f"To continue with «{intent}», I still need: {need}."
+                return (
+                    f"Got it. To add this meeting to your calendar, I still need: {need}. "
+                    "Could you send them in one message?"
+                )
             need = _join_need_list(_missing_phrases_pt(fields), "pt")
-            return f"Para continuar com o pedido («{intent}»), ainda preciso de: {need}."
+            return (
+                f"Perfeito. Para marcar a reunião no calendário, ainda preciso de {need}. "
+                "Pode enviar numa única mensagem?"
+            )
 
         # Um campo: pergunta direcionada (melhor fluxo passo a passo).
         f0 = fields[0]

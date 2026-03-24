@@ -25,8 +25,6 @@ let remoteAudioLastPlayAtByUid = new Map();
 /** Após INVALID_REMOTE_USER / «not published», não martelar o SDK durante este período. */
 let remoteAudioSubscribeBackoffUntilByUid = new Map();
 const REMOTE_AUDIO_INVALID_SUBSCRIBE_BACKOFF_MS = 400;
-const REMOTE_AUDIO_SKIP_HAS_AUDIO_LOG_MS = 3500;
-let remoteAudioLastSkipHasAudioLogAtByUid = new Map();
 let remoteAudioLastInvalidSubscribeLogAtByUid = new Map();
 const REMOTE_AUDIO_INVALID_LOG_EVERY_MS = 4000;
 const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
@@ -39,7 +37,6 @@ function clearRemoteAudioPublishDebouncers() {
   remoteAudioLastSubscribeAtByUid.clear();
   remoteAudioLastPlayAtByUid.clear();
   remoteAudioSubscribeBackoffUntilByUid.clear();
-  remoteAudioLastSkipHasAudioLogAtByUid.clear();
   remoteAudioLastInvalidSubscribeLogAtByUid.clear();
   rtcAudioEventStatsByUid.clear();
 }
@@ -777,14 +774,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
     logAudioDiag("remote_audio", "skip sem remote user", { uid: uidStr });
     return;
   }
-  if (!user.hasAudio) {
-    const lastSkip = remoteAudioLastSkipHasAudioLogAtByUid.get(uidStr) || 0;
-    if (Date.now() - lastSkip >= REMOTE_AUDIO_SKIP_HAS_AUDIO_LOG_MS) {
-      remoteAudioLastSkipHasAudioLogAtByUid.set(uidStr, Date.now());
-      logAudioDiag("remote_audio", "skip sem hasAudio", { uid: uidStr });
-    }
-    return;
-  }
+  // Não exigir hasAudio: no user-published o SDK por vezes ainda não actualizou o flag e o subscribe falhava a toda a sessão.
   const currentTrack = user.audioTrack;
   const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
   const now = Date.now();
@@ -1235,7 +1225,8 @@ async function connectAgora() {
         scheduleCaeRemoteAudioWatchdog();
         const uidForSync = expectedCaeAgentUid;
         setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 0);
-        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 1500);
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 900);
+        setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 2800);
       } else {
         log(t("logCaeFallback"));
         clearCaeRemoteAudioWatchdog();
