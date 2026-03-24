@@ -71,12 +71,14 @@ class ConversationService:
         message: str,
         use_cloud_fallback_for_unknown: bool = True,
         request_source: str = "http",
+        ui_language: str | None = None,
     ) -> AssistantResponse:
         start_ts = perf_counter()
         state = self.memory.get_session(session_id, user_id)
         trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=state.language)
 
-        detected_language = self.language.detect(message, fallback=state.language)
+        fallback_lang = ui_language if ui_language is not None else state.language
+        detected_language = self.language.detect(message, fallback=fallback_lang)
         state.language = detected_language
         self.preferences.set_language(user_id, state.language)
         self.trace_service.step(trace, "detect_language", "Language identified for current turn.", data={"language": detected_language})

@@ -136,7 +136,6 @@ async function fetchWithTimeout(url, options, timeoutMs) {
 const logEl = document.getElementById("log");
 const sessionIdEl = document.getElementById("sessionId");
 const userIdEl = document.getElementById("userId");
-const connectAgoraBtnEl = document.getElementById("connectAgoraBtn");
 const voiceToggleBtnEl = document.getElementById("voiceToggleBtn");
 const interruptAgentBtnEl = document.getElementById("interruptAgentBtn");
 const chatMessagesEl = document.getElementById("chatMessages");
@@ -154,7 +153,6 @@ const ctxSessionEl = document.getElementById("ctxSession");
 const ctxIntentEl = document.getElementById("ctxIntent");
 const ctxConfirmationEl = document.getElementById("ctxConfirmation");
 const ctxExecutedEl = document.getElementById("ctxExecuted");
-const proactiveSuggestionsEl = document.getElementById("proactiveSuggestions");
 const agentTraceEl = document.getElementById("agentTrace");
 const audioUnlockBarEl = document.getElementById("audioUnlockBar");
 const audioUnlockBtnEl = document.getElementById("audioUnlockBtn");
@@ -178,7 +176,6 @@ const UI_TEXTS = {
     sessionLabel: "Session ID",
     userLabel: "User ID",
     chatPlaceholder: "Descreva o que você quer agendar...",
-    connectAgoraBtn: "Conectar Agora",
     voiceToggleIdle: "Iniciar voz",
     voiceToggleRecording: "Parar captura",
     voiceToggleCaeLive: "CAE ativo (fale agora)",
@@ -188,10 +185,8 @@ const UI_TEXTS = {
     ctxIntentLabel: "Última intenção",
     ctxConfirmationLabel: "Confirmação",
     ctxExecutedLabel: "Execução",
-    proactiveTitle: "Sugestões proativas",
     traceTitle: "Operational Trace",
     debugSummary: "Diagnóstico técnico",
-    proactiveEmpty: "Sem sugestões no momento.",
     traceEmpty: "Sem etapas registradas ainda.",
     roleUser: "Você",
     roleAssistant: "Assistente",
@@ -234,7 +229,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE ativo: captura local para STT no chat; o CAE ouve só enquanto o botão de voz está ligado (áudio RTC publicado).",
     logCaeFallback:
-      "O agente de voz CAE não entrou no canal (falha no join na Agora). Se os logs do servidor mostram HTTP 429 ou «vendor capacity», é fila/capacidade do TTS — tente «Conectar Agora» de novo mais tarde ou mude AGORA_CAE_TTS_VENDOR. O chat por texto continua a funcionar.",
+      "O agente de voz CAE não entrou no canal (falha no join na Agora). Se os logs do servidor mostram HTTP 429 ou «vendor capacity», é fila/capacidade do TTS — recarregue a página mais tarde ou mude AGORA_CAE_TTS_VENDOR. O chat por texto continua a funcionar.",
     logCaeRemoteAudioOk:
       "RTC: primeiro áudio publicado pelo agente CAE (uid=%s) — o browser deve reproduzir (ou pedir «Ativar áudio»).",
     logCaeNoRemoteAudioDiagnostic:
@@ -276,7 +271,6 @@ const UI_TEXTS = {
     sessionLabel: "Session ID",
     userLabel: "User ID",
     chatPlaceholder: "Describe what you want to schedule...",
-    connectAgoraBtn: "Connect Agora",
     voiceToggleIdle: "Start voice",
     voiceToggleRecording: "Stop capture",
     voiceToggleCaeLive: "CAE live (speak now)",
@@ -286,10 +280,8 @@ const UI_TEXTS = {
     ctxIntentLabel: "Last intent",
     ctxConfirmationLabel: "Confirmation",
     ctxExecutedLabel: "Execution",
-    proactiveTitle: "Proactive suggestions",
     traceTitle: "Operational Trace",
     debugSummary: "Technical diagnostics",
-    proactiveEmpty: "No suggestions at this time.",
     traceEmpty: "No trace steps yet.",
     roleUser: "You",
     roleAssistant: "Assistant",
@@ -330,7 +322,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE active: local capture for chat STT; CAE listens only while the voice button is on.",
     logCaeFallback:
-      "Voice agent CAE did not join the channel (Agora join failed). If server logs show HTTP 429 or «vendor capacity», the TTS queue is saturated — try «Connect Agora» again later or change AGORA_CAE_TTS_VENDOR. Text chat still works.",
+      "Voice agent CAE did not join the channel (Agora join failed). If server logs show HTTP 429 or «vendor capacity», the TTS queue is saturated — reload the page later or change AGORA_CAE_TTS_VENDOR. Text chat still works.",
     logCaeRemoteAudioOk:
       "RTC: first remote audio published by CAE agent (uid=%s) — browser should play (or use «Enable agent audio»).",
     logCaeNoRemoteAudioDiagnostic:
@@ -372,7 +364,6 @@ const UI_TEXTS = {
     sessionLabel: "Session ID",
     userLabel: "User ID",
     chatPlaceholder: "Describe lo que quieres agendar...",
-    connectAgoraBtn: "Conectar Agora",
     voiceToggleIdle: "Iniciar voz",
     voiceToggleRecording: "Detener captura",
     voiceToggleCaeLive: "CAE activo (habla ahora)",
@@ -382,10 +373,8 @@ const UI_TEXTS = {
     ctxIntentLabel: "Última intención",
     ctxConfirmationLabel: "Confirmación",
     ctxExecutedLabel: "Ejecución",
-    proactiveTitle: "Sugerencias proactivas",
     traceTitle: "Operational Trace",
     debugSummary: "Diagnóstico técnico",
-    proactiveEmpty: "Sin sugerencias por ahora.",
     traceEmpty: "Sin pasos registrados todavía.",
     roleUser: "Tú",
     roleAssistant: "Asistente",
@@ -426,7 +415,7 @@ const UI_TEXTS = {
     logCaeLocalRecord:
       "CAE activo: captura local para STT; el CAE escucha solo mientras el botón de voz está activo.",
     logCaeFallback:
-      "El agente de voz CAE no entró al canal (falló el join en Agora). Si en el servidor ves HTTP 429 o «vendor capacity», hay cola/capacidad del TTS — prueba «Conectar Agora» más tarde o cambia AGORA_CAE_TTS_VENDOR. El chat por texto sigue funcionando.",
+      "El agente de voz CAE no entró al canal (falló el join en Agora). Si en el servidor ves HTTP 429 o «vendor capacity», hay cola/capacidad del TTS — recarga la página más tarde o cambia AGORA_CAE_TTS_VENDOR. El chat por texto sigue funcionando.",
     logCaeRemoteAudioOk:
       "RTC: primer audio publicado por el agente CAE (uid=%s).",
     logCaeNoRemoteAudioDiagnostic:
@@ -514,6 +503,13 @@ function getSpeechLocaleFromUi() {
 function getBackendLangFromUi() {
   if (uiLocale === "es-419") return "es-ES";
   return uiLocale;
+}
+
+/** Idioma da conversa no backend (pt/en/es), alinhado ao seletor da interface. */
+function getConversationLangFromUi() {
+  if (uiLocale.startsWith("en")) return "en";
+  if (uiLocale.startsWith("es")) return "es";
+  return "pt";
 }
 
 let __lastErrorPopupMsg = "";
@@ -895,14 +891,12 @@ function applyUiTranslations() {
     consoleTitle: "consoleTitle",
     sessionLabel: "sessionLabel",
     userLabel: "userLabel",
-    connectAgoraBtn: "connectAgoraBtn",
     sendChatBtn: "sendChatBtn",
     interruptAgentBtn: "interruptAgentBtn",
     ctxSessionLabel: "ctxSessionLabel",
     ctxIntentLabel: "ctxIntentLabel",
     ctxConfirmationLabel: "ctxConfirmationLabel",
     ctxExecutedLabel: "ctxExecutedLabel",
-    proactiveTitle: "proactiveTitle",
     traceTitle: "traceTitle",
     debugSummary: "debugSummary",
     errorModalClose: "errorPopupClose",
@@ -953,23 +947,6 @@ function setContextState({ sessionId = null, intent = null, needsConfirmation = 
   if (intent !== null && ctxIntentEl) ctxIntentEl.textContent = intent || "-";
   if (needsConfirmation !== null && ctxConfirmationEl) ctxConfirmationEl.textContent = needsConfirmation ? t("contextPending") : t("contextNoPending");
   if (actionExecuted !== null && ctxExecutedEl) ctxExecutedEl.textContent = actionExecuted ? t("contextYes") : t("contextNo");
-}
-
-function renderProactiveSuggestions(items = []) {
-  proactiveSuggestionsEl.innerHTML = "";
-  if (!items.length) {
-    const span = document.createElement("span");
-    span.className = "text-xs text-text-muted";
-    span.textContent = t("proactiveEmpty");
-    proactiveSuggestionsEl.appendChild(span);
-    return;
-  }
-  items.slice(0, 2).forEach((item) => {
-    const pill = document.createElement("span");
-    pill.className = "rounded-full border border-border-subtle bg-bg-primary px-2 py-1 text-xs text-text-secondary";
-    pill.textContent = item.message || item.title || "Suggestion";
-    proactiveSuggestionsEl.appendChild(pill);
-  });
 }
 
 function renderAgentTrace(trace) {
@@ -1065,6 +1042,7 @@ async function startCaeAgent(sessionId, channel, token, remoteUid) {
         token,
         remote_uid: String(remoteUid),
         language: getBackendLangFromUi(),
+        user_id: (userIdEl && userIdEl.value ? userIdEl.value.trim() : "") || "local-user",
       }),
     },
     240000,
@@ -1111,7 +1089,6 @@ async function connectAgora() {
   localRtcAudioPublishedToChannel = false;
 
   isConnectingAgora = true;
-  connectAgoraBtnEl.disabled = true;
   const sessionId = sessionIdEl.value.trim();
   const connectT0 = typeof performance !== "undefined" && performance.now ? performance.now() : 0;
   try {
@@ -1223,7 +1200,7 @@ async function connectAgora() {
       } catch (e) {
         if (e && e.name === "AbortError") {
           throw new Error(
-            "CAE: tempo limite (4 min) ao iniciar o agente — a API Agora pode estar com fila (429/capacidade). Desligue e volte a «Conectar Agora».",
+            "CAE: tempo limite (4 min) ao iniciar o agente — a API Agora pode estar com fila (429/capacidade). Recarregue a página e tente de novo.",
           );
         }
         throw e;
@@ -1258,10 +1235,9 @@ async function connectAgora() {
       log(`${t("logCaeFallback")} — ${caeErr?.message || caeErr || ""}`);
       refreshVoiceToggleButton();
     }
-    logAudioDiag("connect", "fluxo Conectar Agora concluído", { ms: Math.round(performance.now() - connectT0) });
+    logAudioDiag("connect", "fluxo de conexão Agora concluído", { ms: Math.round(performance.now() - connectT0) });
   } finally {
     isConnectingAgora = false;
-    connectAgoraBtnEl.disabled = false;
   }
 }
 
@@ -1278,7 +1254,12 @@ async function sendMessage(message) {
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ message, user_id: userId, stream: true }),
+          body: JSON.stringify({
+            message,
+            user_id: userId,
+            stream: true,
+            ui_language: getConversationLangFromUi(),
+          }),
         },
         120000,
       );
@@ -1355,7 +1336,6 @@ async function sendMessage(message) {
       needsConfirmation: finalPayload.needs_confirmation,
       actionExecuted: finalPayload.action_executed,
     });
-    renderProactiveSuggestions(finalPayload.proactive_suggestions || []);
     renderAgentTrace(finalPayload.trace || null);
   } catch (err) {
     if (!isRecording) setVoiceUiState("idle");
@@ -1513,17 +1493,20 @@ async function pollVoiceState() {
   } catch (_err) {}
 }
 
-connectAgoraBtnEl.addEventListener("click", async () => {
-  try {
-    await connectAgora();
-  } catch (err) {
-    const detail = err?.message || String(err);
-    setRtcStatus(false, t("statusFailed"));
-    setVoiceUiState("error");
-    log(detail);
-    showErrorPopup(detail);
-  }
-});
+function waitForAgoraSdk(maxMs = 45000) {
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    const id = setInterval(() => {
+      if (window.AgoraRTC) {
+        clearInterval(id);
+        resolve();
+      } else if (Date.now() - t0 > maxMs) {
+        clearInterval(id);
+        reject(new Error("Agora SDK não carregou a tempo."));
+      }
+    }, 50);
+  });
+}
 
 voiceToggleBtnEl.addEventListener("click", async () => {
   try {
@@ -1571,6 +1554,7 @@ sendChatBtnEl.addEventListener("click", async () => {
 
 chatInputEl.addEventListener("keydown", (event) => {
   if (event.key !== "Enter") return;
+  if (event.shiftKey) return;
   event.preventDefault();
   sendChatBtnEl.click();
 });
@@ -1596,11 +1580,24 @@ setContextState({
   needsConfirmation: false,
   actionExecuted: false,
 });
-renderProactiveSuggestions([]);
 renderAgentTrace(null);
 setVoiceUiState("idle");
 applyUiTranslations();
 addChatMessage("assistant", t("welcomeAssistant"));
+
+(async () => {
+  try {
+    await waitForAgoraSdk();
+    await connectAgora();
+  } catch (err) {
+    const detail = err?.message || String(err);
+    setRtcStatus(false, t("statusFailed"));
+    setVoiceUiState("error");
+    log(detail);
+    showErrorPopup(detail);
+  }
+})();
+
 setInterval(() => {
   pollVoiceState();
 }, 5000);

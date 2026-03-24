@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -11,6 +11,10 @@ from app.schemas.proactive_suggestion import ProactiveSuggestion
 class UserMessageRequest(BaseModel):
     message: str
     user_id: str = "local-user"
+    ui_language: Literal["pt", "en", "es"] | None = Field(
+        default=None,
+        description="Idioma da interface (pt/en/es); referência quando a deteção por texto é ambígua.",
+    )
 
 
 class StreamMessageRequest(UserMessageRequest):

@@ -14,8 +14,15 @@ from pydantic import BaseModel, Field
 from app.adapters.mcp_tools import CalendarMcpTools
 from app.core.config import settings
 from app.services.cae_service import CAEService
-from app.services.container import get_cae_service, get_conversation_service, get_mcp_tools, get_local_llm_client
+from app.services.container import (
+    get_cae_service,
+    get_conversation_service,
+    get_local_llm_client,
+    get_memory_service,
+    get_mcp_tools,
+)
 from app.services.conversation_service import ConversationService
+from app.services.memory_service import MemoryService
 from app.adapters.local_llm_client import LocalLlmClient
 
 router = APIRouter(prefix="/api/cae", tags=["cae"])
@@ -145,12 +152,14 @@ class CAEStartRequest(BaseModel):
     token: str
     remote_uid: str = "0"
     language: str = "pt-BR"
+    user_id: str = "local-user"
 
 
 @router.post("/agent/start")
 async def start_cae_agent(
     payload: CAEStartRequest,
     service: CAEService = Depends(get_cae_service),
+    memory: MemoryService = Depends(get_memory_service),
 ):
     if not settings.agora_cae_enabled:
         return {
@@ -165,6 +174,11 @@ async def start_cae_agent(
             token=payload.token,
             remote_uid=payload.remote_uid,
             language=payload.language,
+        )
+        memory.sync_conversation_language_from_ui_locale(
+            payload.session_id,
+            payload.user_id,
+            payload.language,
         )
         tts_public = service.describe_tts_public(payload.language)
         logger.info(

@@ -31,7 +31,10 @@ def _intent_system_prompt(language: str) -> str:
     if language == "es":
         lang_hint = "El usuario puede hablar en español u otros idiomas."
     elif language == "en":
-        lang_hint = "The user may speak English or other languages."
+        lang_hint = (
+            "The user speaks conversational English (including casual phrasing). "
+            "Map scheduling/calendar wording to the closest intent (e.g. «book a call», «what's on my calendar», «move my 3pm»)."
+        )
     else:
         lang_hint = "O usuário pode falar português ou outros idiomas."
 

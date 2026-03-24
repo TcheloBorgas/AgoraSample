@@ -2,7 +2,28 @@ import re
 
 
 class LanguageService:
-    EN_HINTS = ("schedule", "meeting", "cancel", "reschedule", "tomorrow", "today", "with")
+    EN_HINTS = (
+        "schedule",
+        "meeting",
+        "cancel",
+        "reschedule",
+        "tomorrow",
+        "today",
+        "with",
+        "appointment",
+        "calendar",
+        "book",
+        "available",
+        "next week",
+        "monday",
+        "tuesday",
+        "wednesday",
+        "thursday",
+        "friday",
+        "am",
+        "pm",
+        "at ",
+    )
     PT_HINTS = ("agende", "reuniao", "marque", "reagende", "amanha", "hoje", "compromisso", "manha", "horario", "horário")
     ES_HINTS = ("agenda", "reunion", "cancela", "reagenda", "manana", "mañana", "compromiso", "viernes", "tengo")
 

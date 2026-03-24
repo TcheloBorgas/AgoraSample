@@ -26,7 +26,12 @@ def send_message(
     service: ConversationService = Depends(get_conversation_service),
 ):
     try:
-        return service.handle_message(session_id=session_id, user_id=request.user_id, message=request.message)
+        return service.handle_message(
+            session_id=session_id,
+            user_id=request.user_id,
+            message=request.message,
+            ui_language=request.ui_language,
+        )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
@@ -39,7 +44,12 @@ async def stream_message(
     streaming: ResponseStreamingService = Depends(get_response_streaming_service),
 ):
     try:
-        response = conversation.handle_message(session_id=session_id, user_id=request.user_id, message=request.message)
+        response = conversation.handle_message(
+            session_id=session_id,
+            user_id=request.user_id,
+            message=request.message,
+            ui_language=request.ui_language,
+        )
         return StreamingResponse(streaming.stream_response(response), media_type="text/event-stream")
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
