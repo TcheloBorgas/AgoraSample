@@ -676,6 +676,10 @@ async function setLocalRtcAudioUpstream(publish) {
   try {
     if (publish) {
       if (localRtcAudioPublishedToChannel) return;
+      // O Web SDK recusa publish com track desligado (TRACK_IS_DISABLED).
+      if (typeof localTrack.setEnabled === "function" && !localTrack.enabled) {
+        await localTrack.setEnabled(true);
+      }
       await agoraClient.publish([localTrack]);
       localRtcAudioPublishedToChannel = true;
       logAudioDiag("RTC upstream", "publish — microfone no canal (CAE/ASR pode ouvir)");
@@ -754,8 +758,8 @@ async function trySyncSubscribeCaeAgentAudio(agentUid) {
   if (!agoraClient || agentUid == null) return;
   const uidStr = String(agentUid);
   const remoteUsers = agoraClient.remoteUsers || [];
-  const hasPublished = remoteUsers.some((u) => String(u.uid) === uidStr && u.hasAudio);
-  if (!hasPublished) return;
+  const u = remoteUsers.find((x) => String(x.uid) === uidStr);
+  if (!u) return;
   try {
     await applyRemoteUserAudioPublished(uidStr);
     log(`RTC: sync subscribe áudio do agente uid=${agentUid}`);
@@ -806,10 +810,11 @@ async function applyRemoteUserAudioPublished(uidStr) {
   logAudioDiag("remote_audio", "applyRemoteUserAudioPublished início", { uid: uidStr });
   const users = agoraClient.remoteUsers || [];
   const user = users.find((u) => String(u.uid) === uidStr);
-  if (!user || !user.hasAudio) {
-    logAudioDiag("remote_audio", "skip sem hasAudio", { uid: uidStr });
+  if (!user) {
+    logAudioDiag("remote_audio", "skip sem remote user", { uid: uidStr });
     return;
   }
+  // Não exigir hasAudio: com TTS em rajadas o CAE alterna publish e hasAudio fica false no debounce.
   const currentTrack = user.audioTrack;
   const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
   const now = Date.now();
@@ -832,7 +837,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   const pickUser = () => (agoraClient.remoteUsers || []).find((u) => String(u.uid) === uidStr);
-  const delaysMs = [0, 16, 48];
+  const delaysMs = [0, 16, 48, 100, 200];
   let remote = pickUser();
   let track = remote?.audioTrack ?? user.audioTrack;
   for (let i = 0; !track && i < delaysMs.length; i += 1) {
@@ -1407,6 +1412,7 @@ async function transcribeRecordedAudio(wavBlob) {
 async function startRecording() {
   if (isRecording) return;
   if (isRtcConnected && agoraClient && localTrack) {
+    await setRtcMicCaptureEnabled(true);
     await setLocalRtcAudioUpstream(true);
   }
   try {
@@ -1431,8 +1437,8 @@ async function startRecording() {
     setVoiceUiState("listening");
     refreshVoiceToggleButton();
   } catch (err) {
-    await setRtcMicCaptureEnabled(false);
     await setLocalRtcAudioUpstream(false);
+    await setRtcMicCaptureEnabled(false);
     throw err;
   }
 }
@@ -1464,8 +1470,8 @@ async function stopRecordingAndSend() {
   recordingSource = null;
   recordingStream = null;
   recordingContext = null;
-  await setRtcMicCaptureEnabled(false);
   await setLocalRtcAudioUpstream(false);
+  await setRtcMicCaptureEnabled(false);
   setVoiceUiState("thinking");
 
   const totalLength = recordingChunks.reduce((acc, item) => acc + item.length, 0);
