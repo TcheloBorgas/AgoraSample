@@ -3,7 +3,7 @@
 ## Português (Brasil)
 Frontend da aplicação:
 - `index.html`: layout principal (hero, chat, painéis de contexto/trace, status RTC).
-- `app.js`: lógica de UI, i18n (PT/EN/ES), conexão Agora RTC, start CAE, fallback STT, SSE streaming. Voz sintetizada só via **TTS do CAE** (áudio remoto no RTC); respostas do chat são só texto.
+- `app.js`: lógica de UI, i18n (PT/EN), conexão Agora RTC, start CAE, fallback STT, SSE streaming. Voz sintetizada só via **TTS do CAE** (áudio remoto no RTC); respostas do chat são só texto.
 
 Fluxo importante:
 1. Buscar sessão Agora em `/api/system/agora/session/{session_id}`
@@ -18,7 +18,3 @@ Fluxo importante:
 ---
 ## English
 Client-side UI for RTC, CAE startup, chat, STT fallback, and streaming responses. Synthesized voice is **CAE TTS only** (remote RTC audio); chat replies are text-only.
-
----
-## Español
-Interfaz web y lógica cliente para RTC, arranque CAE, chat, fallback de voz y respuestas en streaming.

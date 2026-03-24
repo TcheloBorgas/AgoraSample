@@ -46,10 +46,18 @@ class MemoryService:
         self.conversations.add_message(state.session_id, "user", content, state.language, intent)
         self.sessions.save(state)
 
-    def append_assistant_message(self, state: ConversationState, content: str, intent: str, metadata: dict | None = None) -> None:
+    def append_assistant_message(
+        self,
+        state: ConversationState,
+        content: str,
+        intent: str,
+        metadata: dict | None = None,
+        stored_language: str | None = None,
+    ) -> None:
+        lang = stored_language if stored_language is not None else state.language
         state.short_memory.append({"role": "assistant", "content": content})
         state.short_memory = state.short_memory[-settings.short_term_memory_limit :]
-        self.conversations.add_message(state.session_id, "assistant", content, state.language, intent, metadata=metadata)
+        self.conversations.add_message(state.session_id, "assistant", content, lang, intent, metadata=metadata)
         self.sessions.save(state)
 
     def remember_meeting_pattern(self, user_id: str, meeting_payload: dict) -> None:

@@ -259,6 +259,7 @@ async def cae_llm_callback(
     session_id: str = Query("cae-default"),
     user_id: str = Query("local-user"),
     conversation: ConversationService = Depends(get_conversation_service),
+    memory: MemoryService = Depends(get_memory_service),
 ):
     """
     Callback em estilo OpenAI para o CAE em modo llm.vendor=custom/style=openai.
@@ -381,12 +382,17 @@ async def cae_llm_callback(
                     user_text[:400] + ("…" if len(user_text) > 400 else ""),
                 )
 
+            pref = memory.preferences.get(user_id) or {}
+            ui_lock = pref.get("preferred_language") or "pt"
+            if ui_lock not in ("pt", "en", "es"):
+                ui_lock = "pt"
             result = conversation.handle_message(
                 session_id=session_id,
                 user_id=user_id,
                 message=user_text,
                 use_cloud_fallback_for_unknown=False,
                 request_source="cae_llm",
+                ui_language=ui_lock,
             )
             out_text = (result.response_text or "").strip()
             if not out_text:

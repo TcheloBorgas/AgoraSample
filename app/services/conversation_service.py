@@ -75,13 +75,20 @@ class ConversationService:
     ) -> AssistantResponse:
         start_ts = perf_counter()
         state = self.memory.get_session(session_id, user_id)
-        trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=state.language)
-
         fallback_lang = ui_language if ui_language is not None else state.language
         detected_language = self.language.detect(message, fallback=fallback_lang)
+        locked = self.language.normalize_ui_locale(ui_language)
+        reply_lang = locked if locked is not None else detected_language
         state.language = detected_language
-        self.preferences.set_language(user_id, state.language)
-        self.trace_service.step(trace, "detect_language", "Language identified for current turn.", data={"language": detected_language})
+        self.preferences.set_language(user_id, reply_lang)
+
+        trace = self.trace_service.start_turn(session_id=session_id, user_id=user_id, language=reply_lang)
+        self.trace_service.step(
+            trace,
+            "detect_language",
+            "Language identified for current turn.",
+            data={"detected": detected_language, "reply_language": reply_lang},
+        )
 
         intent_result = self.intents.detect_intent_and_entities(message, state.language)
         if intent_result.intent == "unknown" and state.meeting_draft is not None:
@@ -144,7 +151,7 @@ class ConversationService:
                     text = self.language.in_language(
                         self._pt_create_confirm(new_payload),
                         self._en_create_confirm(new_payload),
-                        state.language,
+                        reply_lang,
                         es_text=self._es_create_confirm(new_payload),
                     )
                     self.trace_service.step(
@@ -153,7 +160,9 @@ class ConversationService:
                         "User adjusted draft while awaiting confirmation; showing updated summary.",
                         data={"keys": list(rev.keys())},
                     )
-                    response = self._build_response(state, "create_meeting", text, True, False, {"draft": new_payload})
+                    response = self._build_response(
+                        state, "create_meeting", text, True, False, {"draft": new_payload}, response_language=reply_lang
+                    )
                 else:
                     topic_switch = {
                         "list_meetings",
@@ -172,6 +181,7 @@ class ConversationService:
                             intent_result.missing_fields,
                             message,
                             trace,
+                            reply_lang,
                             use_cloud_fallback_for_unknown,
                         )
                     elif intent_result.intent == "unknown":
@@ -180,7 +190,7 @@ class ConversationService:
                             "Diga explicitamente «sim» ou «não», ou indique o campo a alterar (horário, título, etc.).",
                             "Error: while a meeting confirmation is pending, your message was not recognized as yes, no, or a draft change. "
                             "Say explicitly «yes» or «no», or state which field to change (time, title, etc.).",
-                            state.language,
+                            reply_lang,
                             es_text="Error: con confirmación de reunión pendiente, el mensaje no se reconoció como sí, no o cambio del borrador. "
                             "Diga explícitamente «sí» o «no», o qué campo cambiar (hora, título, etc.).",
                         )
@@ -190,7 +200,7 @@ class ConversationService:
                             "Unknown utterance during pending confirmation; kept pending.",
                             status="warning",
                         )
-                        response = self._build_response(state, "unknown", text, True, False)
+                        response = self._build_response(state, "unknown", text, True, False, response_language=reply_lang)
                     else:
                         state.pending_confirmation = None
                         response = self._handle_intent(
@@ -201,6 +211,7 @@ class ConversationService:
                             intent_result.missing_fields,
                             message,
                             trace,
+                            reply_lang,
                             use_cloud_fallback_for_unknown,
                         )
             else:
@@ -213,10 +224,11 @@ class ConversationService:
                     intent_result.missing_fields,
                     message,
                     trace,
+                    reply_lang,
                     use_cloud_fallback_for_unknown,
                 )
         elif state.pending_confirmation:
-            response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace)
+            response = self._handle_confirmation(state, user_id, intent_result.intent, message, trace, reply_lang)
         elif intent_result.intent == "confirm_yes" and state.pending_confirmation is None and state.meeting_draft is not None:
             merged = self.intents.merge_meeting_draft(state.meeting_draft, intent_result.entities)
             missing = self.intents._required_fields("create_meeting", merged)
@@ -228,15 +240,15 @@ class ConversationService:
                     status="warning",
                     data={"missing_fields": missing},
                 )
-                text = self.fallback.misplaced_confirm_yes_during_booking(missing, state.language)
-                response = self._build_response(state, "create_meeting", text, False, False)
+                text = self.fallback.misplaced_confirm_yes_during_booking(missing, reply_lang)
+                response = self._build_response(state, "create_meeting", text, False, False, response_language=reply_lang)
             else:
                 response = self._reparse_as_new_intent(
-                    state, user_id, message, trace, use_cloud_fallback_for_unknown
+                    state, user_id, message, trace, reply_lang, use_cloud_fallback_for_unknown
                 )
         elif intent_result.intent in {"confirm_yes", "confirm_no"}:
             response = self._reparse_as_new_intent(
-                state, user_id, message, trace, use_cloud_fallback_for_unknown
+                state, user_id, message, trace, reply_lang, use_cloud_fallback_for_unknown
             )
         else:
             response = self._handle_intent(
@@ -247,6 +259,7 @@ class ConversationService:
                 intent_result.missing_fields,
                 message,
                 trace,
+                reply_lang,
                 use_cloud_fallback_for_unknown,
             )
 
@@ -255,7 +268,7 @@ class ConversationService:
             proactive_suggestions = self.proactive.suggest(
                 session_id=state.session_id,
                 user_id=user_id,
-                language=state.language,
+                language=reply_lang,
                 trigger=trigger,
             )
         except Exception as exc:  # noqa: BLE001
@@ -329,11 +342,12 @@ class ConversationService:
         missing_fields: list[str],
         raw_message: str,
         trace: TraceContext,
+        reply_lang: str,
         use_cloud_fallback_for_unknown: bool = True,
     ) -> AssistantResponse:
         if intent == "unknown":
             text = self._smart_unknown_reply(
-                state.language,
+                reply_lang,
                 raw_message,
                 use_cloud_fallback_for_unknown=use_cloud_fallback_for_unknown,
             )
@@ -343,7 +357,7 @@ class ConversationService:
                 "Intent unknown: user-facing error message returned (no successful classification).",
                 status="warning",
             )
-            return self._build_response(state, intent, text, False, False)
+            return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
         if intent == "set_language":
             lang = entities.get("language") or state.language
@@ -355,12 +369,12 @@ class ConversationService:
                 lang,
             )
             self.trace_service.step(trace, "set_language", "Updated preferred language.", data={"language": lang})
-            return self._build_response(state, "set_language", text, False, True)
+            return self._build_response(state, "set_language", text, False, True, response_language=lang)
 
         if missing_fields:
-            text = self.fallback.clarify_missing(intent, missing_fields, state.language)
+            text = self.fallback.clarify_missing(intent, missing_fields, reply_lang)
             self.trace_service.step(trace, "validate_context", "Missing required fields for action.", status="warning", data={"missing_fields": missing_fields})
-            return self._build_response(state, intent, text, False, False)
+            return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
         try:
             if intent == "list_meetings":
@@ -375,8 +389,16 @@ class ConversationService:
                 )
                 events = exec_result.output_payload.get("events", [])
                 self.trace_service.step(trace, "execute_tool", exec_result.summary, data={"tool": exec_result.tool_name, "success": exec_result.success})
-                text = self._format_events(events, state.language, list_span=list_span)
-                return self._build_response(state, intent, text, False, True, {"events": events, "tool_execution": exec_result.model_dump(mode="json")})
+                text = self._format_events(events, reply_lang, list_span=list_span)
+                return self._build_response(
+                    state,
+                    intent,
+                    text,
+                    False,
+                    True,
+                    {"events": events, "tool_execution": exec_result.model_dump(mode="json")},
+                    response_language=reply_lang,
+                )
 
             if intent == "repeat_last_meeting":
                 last = self.memory.get_last_meeting_pattern(user_id)
@@ -384,24 +406,24 @@ class ConversationService:
                     text = self.language.in_language(
                         "Erro: não há padrão de reunião anterior guardado para repetir (memória vazia ou sessão nova).",
                         "Error: no saved previous meeting pattern to repeat (empty memory or new session).",
-                        state.language,
+                        reply_lang,
                         es_text="Error: no hay patrón de reunión anterior guardado para repetir (memoria vacía o sesión nueva).",
                     )
                     self.trace_service.step(trace, "validate_context", "No meeting pattern available to repeat.", status="warning")
-                    return self._build_response(state, intent, text, False, False)
+                    return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
                 state.pending_confirmation = {
                     "action": "create",
                     "payload": last,
                 }
-                start_label = self._format_dt(last["start"], state.language)
+                start_label = self._format_dt(last["start"], reply_lang)
                 text = self.language.in_language(
                     f"Posso repetir sua ultima reuniao para {start_label}, com duracao de {last['duration_minutes']} minutos?",
                     f"Should I repeat your last meeting at {start_label}, for {last['duration_minutes']} minutes?",
-                    state.language,
+                    reply_lang,
                 )
                 self.trace_service.step(trace, "propose_action", "Prepared repeat-last-meeting confirmation.", data={"action": "create"})
-                return self._build_response(state, intent, text, True, False, {"draft": last})
+                return self._build_response(state, intent, text, True, False, {"draft": last}, response_language=reply_lang)
 
             if intent == "create_meeting":
                 payload = {
@@ -418,11 +440,11 @@ class ConversationService:
                 text = self.language.in_language(
                     self._pt_create_confirm(payload),
                     self._en_create_confirm(payload),
-                    state.language,
+                    reply_lang,
                     es_text=self._es_create_confirm(payload),
                 )
                 self.trace_service.step(trace, "propose_action", "Prepared create meeting confirmation.", data={"action": "create", "payload": payload})
-                return self._build_response(state, intent, text, True, False, {"draft": payload})
+                return self._build_response(state, intent, text, True, False, {"draft": payload}, response_language=reply_lang)
 
             if intent == "reschedule_meeting":
                 target = self.scheduler.find_target_event(entities.get("target_hint"), around=entities.get("start"))
@@ -432,12 +454,12 @@ class ConversationService:
                         "Indique título, horário ou participantes com mais precisão.",
                         "Error: could not identify which meeting to reschedule from your text (no calendar match). "
                         "Provide title, time, or participants more precisely.",
-                        state.language,
+                        reply_lang,
                         es_text="Error: no se pudo identificar qué reunión reagendar (sin coincidencia en el calendario). "
                         "Indique título, hora o participantes con más precisión.",
                     )
                     self.trace_service.step(trace, "validate_context", "Could not identify target meeting for reschedule.", status="warning")
-                    return self._build_response(state, intent, text, False, False)
+                    return self._build_response(state, intent, text, False, False, response_language=reply_lang)
                 payload = {
                     "event_id": target["id"],
                     "new_start": entities["start"].isoformat(),
@@ -445,14 +467,14 @@ class ConversationService:
                     "summary": target.get("summary", "Reuniao"),
                 }
                 state.pending_confirmation = {"action": "reschedule", "payload": payload}
-                new_start_label = self._format_dt(payload["new_start"], state.language)
+                new_start_label = self._format_dt(payload["new_start"], reply_lang)
                 text = self.language.in_language(
                     f"Perfeito. Posso reagendar '{payload['summary']}' para {new_start_label}?",
                     f"Can I reschedule '{payload['summary']}' to {new_start_label}?",
-                    state.language,
+                    reply_lang,
                 )
                 self.trace_service.step(trace, "propose_action", "Prepared reschedule confirmation.", data={"action": "reschedule", "payload": payload})
-                return self._build_response(state, intent, text, True, False, {"draft": payload})
+                return self._build_response(state, intent, text, True, False, {"draft": payload}, response_language=reply_lang)
 
             if intent == "cancel_meeting":
                 target = self.scheduler.find_target_event(entities.get("target_hint"), around=entities.get("start"))
@@ -460,44 +482,44 @@ class ConversationService:
                     text = self.language.in_language(
                         "Erro: não foi possível identificar qual reunião cancelar a partir do texto (sem correspondência no calendário).",
                         "Error: could not identify which meeting to cancel from your text (no calendar match).",
-                        state.language,
+                        reply_lang,
                         es_text="Error: no se pudo identificar qué reunión cancelar (sin coincidencia en el calendario).",
                     )
                     self.trace_service.step(trace, "validate_context", "Could not identify target meeting for cancellation.", status="warning")
-                    return self._build_response(state, intent, text, False, False)
+                    return self._build_response(state, intent, text, False, False, response_language=reply_lang)
                 payload = {
                     "event_id": target["id"],
                     "summary": target.get("summary", "Reuniao"),
                     "start": target.get("start", {}).get("dateTime"),
                 }
                 state.pending_confirmation = {"action": "cancel", "payload": payload}
-                start_label = self._format_dt(payload.get("start"), state.language)
+                start_label = self._format_dt(payload.get("start"), reply_lang)
                 text = self.language.in_language(
                     f"So para confirmar: deseja cancelar '{payload['summary']}' em {start_label}?",
                     f"Do you really want to cancel '{payload['summary']}' at {start_label}?",
-                    state.language,
+                    reply_lang,
                 )
                 self.trace_service.step(trace, "propose_action", "Prepared cancel confirmation.", data={"action": "cancel", "payload": payload})
-                return self._build_response(state, intent, text, True, False, {"draft": payload})
+                return self._build_response(state, intent, text, True, False, {"draft": payload}, response_language=reply_lang)
         except Exception as exc:  # noqa: BLE001
             metrics.inc("errors_total")
             self.actions.log(state.session_id, user_id, intent, "pre_action", entities, False, str(exc))
             self.trace_service.step(trace, "execute_tool", "Failed while preparing action.", status="error", data={"error": str(exc)})
             text = self.language.in_language(
-                f"Erro: falha ao preparar ou executar a ação pedida: {self._humanize_error(exc, state.language)}",
-                f"Error: failed while preparing or executing the requested action: {self._humanize_error(exc, state.language)}",
-                state.language,
-                es_text=f"Error: fallo al preparar o ejecutar la acción: {self._humanize_error(exc, state.language)}",
+                f"Erro: falha ao preparar ou executar a ação pedida: {self._humanize_error(exc, reply_lang)}",
+                f"Error: failed while preparing or executing the requested action: {self._humanize_error(exc, reply_lang)}",
+                reply_lang,
+                es_text=f"Error: fallo al preparar o ejecutar la acción: {self._humanize_error(exc, reply_lang)}",
             )
-            return self._build_response(state, intent, text, False, False)
+            return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
         text = self.language.in_language(
             f"Erro: intenção «{intent}» não tem ramo de tratamento implementado no servidor.",
             f"Error: intent «{intent}» has no handler implemented on the server.",
-            state.language,
+            reply_lang,
             es_text=f"Error: la intención «{intent}» no tiene manejador en el servidor.",
         )
-        return self._build_response(state, intent, text, False, False)
+        return self._build_response(state, intent, text, False, False, response_language=reply_lang)
 
     def _smart_unknown_reply(
         self,
@@ -549,6 +571,7 @@ class ConversationService:
         user_id: str,
         raw_message: str,
         trace: TraceContext,
+        reply_lang: str,
         use_cloud_fallback_for_unknown: bool = True,
     ) -> AssistantResponse:
         """User said something like 'confirm' but there's no pending action.
@@ -580,16 +603,17 @@ class ConversationService:
                 missing,
                 raw_message,
                 trace,
+                reply_lang,
                 use_cloud_fallback_for_unknown,
             )
 
         text = self.language.in_language(
             "Erro: não há operação pendente de confirmação no calendário e a mensagem não foi reclassificada como nova intenção.",
             "Error: no pending calendar confirmation and the message was not reclassified as a new intent.",
-            state.language,
+            reply_lang,
             es_text="Error: no hay operación de confirmación pendiente y el mensaje no se reclasificó como nueva intención.",
         )
-        return self._build_response(state, "unknown", text, False, False)
+        return self._build_response(state, "unknown", text, False, False, response_language=reply_lang)
 
     def _handle_confirmation(
         self,
@@ -598,6 +622,7 @@ class ConversationService:
         detected_intent: str,
         raw_message: str,
         trace: TraceContext,
+        reply_lang: str,
     ) -> AssistantResponse:
         if detected_intent == "confirm_no":
             state.pending_confirmation = None
@@ -605,20 +630,20 @@ class ConversationService:
             text = self.language.in_language(
                 "Sem problemas, operacao cancelada.",
                 "No problem, operation canceled.",
-                state.language,
+                reply_lang,
             )
             self.trace_service.step(trace, "confirm_action", "User denied confirmation.", data={"intent": detected_intent})
-            return self._build_response(state, "confirm_no", text, False, False)
+            return self._build_response(state, "confirm_no", text, False, False, response_language=reply_lang)
 
         if detected_intent != "confirm_yes":
             text = self.language.in_language(
                 "Erro: com confirmação pendente, a resposta tem de ser explicitamente «sim» ou «não».",
                 "Error: while confirmation is pending, the reply must be explicitly «yes» or «no».",
-                state.language,
+                reply_lang,
                 es_text="Error: con confirmación pendiente, la respuesta debe ser explícitamente «sí» o «no».",
             )
             self.trace_service.step(trace, "confirm_action", "User response was not a valid confirmation.", status="warning")
-            return self._build_response(state, detected_intent, text, True, False)
+            return self._build_response(state, detected_intent, text, True, False, response_language=reply_lang)
 
         pending = state.pending_confirmation or {}
         action = pending.get("action")
@@ -653,15 +678,17 @@ class ConversationService:
                     date_parser.isoparse(item) for item in exec_result.output_payload.get("suggestions", []) if isinstance(item, str)
                 ]
                 if not exec_result.success:
-                    sug = self._format_suggestions(suggestions, state.language)
+                    sug = self._format_suggestions(suggestions, reply_lang)
                     text = self.language.in_language(
                         f"Erro: conflito de agenda ao criar o evento neste horário. Sugestões alternativas: {sug}",
                         f"Error: calendar conflict when creating the event at that time. Alternative suggestions: {sug}",
-                        state.language,
+                        reply_lang,
                         es_text=f"Error: conflicto de agenda al crear el evento. Sugerencias: {sug}",
                     )
                     self.actions.log(state.session_id, user_id, "create_meeting", "create", payload, False, "conflict")
-                    return self._build_response(state, "create_meeting", text, False, False, {"suggestions": sug})
+                    return self._build_response(
+                        state, "create_meeting", text, False, False, {"suggestions": sug}, response_language=reply_lang
+                    )
 
                 self.memory.remember_meeting_pattern(
                     user_id,
@@ -678,7 +705,7 @@ class ConversationService:
                 text = self.language.in_language(
                     self._pt_create_done(event),
                     self._en_create_done(event),
-                    state.language,
+                    reply_lang,
                     es_text=self._es_create_done(event),
                 )
                 self.actions.log(state.session_id, user_id, "create_meeting", "create", payload, True)
@@ -689,6 +716,7 @@ class ConversationService:
                     False,
                     True,
                     {"event": event, "tool_execution": exec_result.model_dump(mode="json")},
+                    response_language=reply_lang,
                 )
 
             if action == "reschedule":
@@ -713,19 +741,21 @@ class ConversationService:
                     date_parser.isoparse(item) for item in exec_result.output_payload.get("suggestions", []) if isinstance(item, str)
                 ]
                 if not exec_result.success:
-                    sug = self._format_suggestions(suggestions, state.language)
+                    sug = self._format_suggestions(suggestions, reply_lang)
                     text = self.language.in_language(
                         f"Erro: o reagendamento falhou por conflito de agenda no novo horário. Sugestões: {sug}",
                         f"Error: reschedule failed due to a calendar conflict at the new time. Suggestions: {sug}",
-                        state.language,
+                        reply_lang,
                         es_text=f"Error: fallo al reagendar por conflicto en la nueva hora. Sugerencias: {sug}",
                     )
                     self.actions.log(state.session_id, user_id, "reschedule_meeting", "reschedule", payload, False, "conflict")
-                    return self._build_response(state, "reschedule_meeting", text, False, False, {"suggestions": sug})
+                    return self._build_response(
+                        state, "reschedule_meeting", text, False, False, {"suggestions": sug}, response_language=reply_lang
+                    )
                 text = self.language.in_language(
                     self._pt_reschedule_done(event),
                     self._en_reschedule_done(event),
-                    state.language,
+                    reply_lang,
                     es_text=self._es_reschedule_done(event),
                 )
                 self.actions.log(state.session_id, user_id, "reschedule_meeting", "reschedule", payload, True)
@@ -736,6 +766,7 @@ class ConversationService:
                     False,
                     True,
                     {"event": event, "tool_execution": exec_result.model_dump(mode="json")},
+                    response_language=reply_lang,
                 )
 
             if action == "cancel":
@@ -744,7 +775,7 @@ class ConversationService:
                 text = self.language.in_language(
                     "Tudo certo, ja cancelei essa reuniao para voce.",
                     "All set, the meeting was canceled successfully.",
-                    state.language,
+                    reply_lang,
                 )
                 self.actions.log(state.session_id, user_id, "cancel_meeting", "cancel", payload, True)
                 return self._build_response(
@@ -754,26 +785,27 @@ class ConversationService:
                     False,
                     True,
                     {"tool_execution": exec_result.model_dump(mode="json")},
+                    response_language=reply_lang,
                 )
 
             text = self.language.in_language(
                 "Erro: estado de confirmação inconsistente — ação pendente desconhecida ou já limpa.",
                 "Error: inconsistent confirmation state — unknown or cleared pending action.",
-                state.language,
+                reply_lang,
                 es_text="Error: estado de confirmación inconsistente — acción pendiente desconocida.",
             )
-            return self._build_response(state, detected_intent, text, False, False)
+            return self._build_response(state, detected_intent, text, False, False, response_language=reply_lang)
         except Exception as exc:  # noqa: BLE001
             metrics.inc("errors_total")
             self.actions.log(state.session_id, user_id, detected_intent, action or "unknown", payload, False, str(exc))
             self.trace_service.step(trace, "execute_tool", "Tool execution failed.", status="error", data={"error": str(exc)})
             text = self.language.in_language(
-                f"Erro: falha ao executar a ação confirmada: {self._humanize_error(exc, state.language)}",
-                f"Error: failed to execute the confirmed action: {self._humanize_error(exc, state.language)}",
-                state.language,
-                es_text=f"Error: fallo al ejecutar la acción confirmada: {self._humanize_error(exc, state.language)}",
+                f"Erro: falha ao executar a ação confirmada: {self._humanize_error(exc, reply_lang)}",
+                f"Error: failed to execute the confirmed action: {self._humanize_error(exc, reply_lang)}",
+                reply_lang,
+                es_text=f"Error: fallo al ejecutar la acción confirmada: {self._humanize_error(exc, reply_lang)}",
             )
-            return self._build_response(state, detected_intent, text, False, False)
+            return self._build_response(state, detected_intent, text, False, False, response_language=reply_lang)
 
     def _build_response(
         self,
@@ -783,12 +815,14 @@ class ConversationService:
         needs_confirmation: bool,
         action_executed: bool,
         payload: dict | None = None,
+        *,
+        response_language: str,
     ) -> AssistantResponse:
         state.last_intent = intent
-        self.memory.append_assistant_message(state, text, intent, payload or {})
+        self.memory.append_assistant_message(state, text, intent, payload or {}, stored_language=response_language)
         return AssistantResponse(
             session_id=state.session_id,
-            language=state.language,
+            language=response_language,
             intent=intent,  # type: ignore[arg-type]
             response_text=text,
             needs_confirmation=needs_confirmation,

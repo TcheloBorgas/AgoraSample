@@ -57,3 +57,17 @@ class LanguageService:
         if language == "es":
             return es_text or en_text
         return pt_text if language == "pt" else en_text
+
+    @staticmethod
+    def normalize_ui_locale(locale: str | None) -> str | None:
+        """Mapeia etiqueta BCP-47 (ex.: en-US, pt-BR) para pt/en/es; None se não reconhecida."""
+        if locale is None or not str(locale).strip():
+            return None
+        loc = str(locale).strip().lower()
+        if loc.startswith("en"):
+            return "en"
+        if loc.startswith("es"):
+            return "es"
+        if loc.startswith("pt"):
+            return "pt"
+        return None

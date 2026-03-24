@@ -15,16 +15,19 @@ def _scheduling_system_prompt(language: str) -> str:
     if language == "es":
         return (
             "Eres un asistente de agenda. Responde en español, de forma breve y natural.\n"
-            "Si la solicitud es ambigua, haz una sola pregunta clara para aclarar."
+            "Si la solicitud es ambigua, haz una sola pregunta clara para aclarar.\n"
+            "No mezcles inglés ni portugués: toda la respuesta debe estar solo en español."
         )
     if language == "pt":
         return (
             "Você é um assistente de agenda. Responda em português, de forma curta e humana.\n"
-            "Se o pedido estiver ambíguo, faça uma única pergunta objetiva para clarificar."
+            "Se o pedido estiver ambíguo, faça uma única pergunta objetiva para clarificar.\n"
+            "Não use inglês nem espanhol na resposta: apenas português, do primeiro ao último caractere."
         )
     return (
         "You are a scheduling assistant. Reply in concise, natural English.\n"
-        "If the request is ambiguous, ask one objective clarification question."
+        "If the request is ambiguous, ask one objective clarification question.\n"
+        "Do not use Portuguese or Spanish in your reply — English only, from start to finish."
     )
 
 

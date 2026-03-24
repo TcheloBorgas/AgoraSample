@@ -109,8 +109,8 @@ let recordingNode = null;
 let recordingChunks = [];
 let isRecording = false;
 
-let uiLocale = "pt-BR";
-let currentLanguage = "pt-BR";
+let uiLocale = "en-US";
+let currentLanguage = "en-US";
 let voiceUiState = "idle";
 
 /** Base do FastAPI: vazio = mesmo host (quando a UI é servida pelo uvicorn). Para file:// ou outro host, defina antes de carregar este script: window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' */
@@ -210,7 +210,7 @@ const UI_TEXTS = {
     contextYes: "Sim",
     contextNo: "Não",
     welcomeAssistant:
-      "Olá! Para agendar, vou pedir seu nome, o assunto da reunião (esse texto vira o nome do evento no calendário), seu e-mail e data/hora. Também posso listar, reagendar ou cancelar. Links não são lidos em voz.",
+      "Olá! Para agendar, faço uma pergunta de cada vez (nome, e-mail, assunto da reunião, data/hora) — assim funciona melhor por voz. Também posso listar, reagendar ou cancelar. Links não são lidos em voz.",
     logConnecting: "Conexão com Agora em andamento.",
     logAlreadyConnected: "Já conectado no canal Agora.",
     logAgoraStepSession: "1/3 A pedir token ao backend…",
@@ -306,7 +306,7 @@ const UI_TEXTS = {
     contextYes: "Yes",
     contextNo: "No",
     welcomeAssistant:
-      "Hello! To schedule, I'll ask your name, meeting subject, email, and date and time. I can also list, reschedule, or cancel. Calendar links are not read aloud.",
+      "Hello! To schedule, I'll ask one thing at a time (your name, email, meeting subject, then date and time) — that works better for voice. I can also list, reschedule, or cancel. Calendar links are not read aloud.",
     logConnecting: "Connecting to Agora...",
     logAlreadyConnected: "Already connected to Agora channel.",
     logAgoraStepSession: "1/3 Requesting token from backend…",
@@ -348,100 +348,6 @@ const UI_TEXTS = {
       "The server returned an HTML page (e.g. Netlify «Page not found») instead of JSON.\n\n" +
       "• Netlify: Site → Environment variables → set SCHEDULER_API_BASE to your FastAPI public URL (no trailing slash), then redeploy.\n" +
       "• Local: serve from uvicorn or set window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' before app.js.",
-  },
-  "es-419": {
-    brandText: "Voice Scheduling System",
-    portfolioTopLink: "Ver mi portafolio",
-    heroEyebrow: "Agente conversacional en tiempo real",
-    heroTitleMain: "Conversa naturalmente.",
-    heroTitleGrad: "Agenda con confianza.",
-    heroCopy: "Interfaz de producto para voz + chat con streaming, contexto operativo e inteligencia de agenda.",
-    portfolioInfoTitle: "Más información",
-    portfolioInfoDesc: "Explora proyectos, trayectoria y publicaciones en un portafolio completo.",
-    portfolioBullet1: "Proyectos de IA aplicada e ingeniería",
-    portfolioBullet2: "Experiencia profesional y stack",
-    portfolioBullet3: "Contacto para colaboraciones",
-    portfolioHeroLink: "Portafolio",
-    consoleTitle: "Conversation Workspace",
-    sessionLabel: "Session ID",
-    userLabel: "User ID",
-    chatPlaceholder: "Describe lo que quieres agendar...",
-    voiceToggleIdle: "Iniciar voz",
-    voiceToggleRecording: "Detener captura",
-    voiceToggleCaeLive: "CAE activo (habla ahora)",
-    sendChatBtn: "Enviar",
-    interruptAgentBtn: "Interrumpir respuesta del agente",
-    ctxSessionLabel: "Sesión",
-    ctxIntentLabel: "Última intención",
-    ctxConfirmationLabel: "Confirmación",
-    ctxExecutedLabel: "Ejecución",
-    traceTitle: "Operational Trace",
-    debugSummary: "Diagnóstico técnico",
-    traceEmpty: "Sin pasos registrados todavía.",
-    roleUser: "Tú",
-    roleAssistant: "Asistente",
-    statusWaiting: "Esperando conexión",
-    statusConnected: "Conectado",
-    statusFailed: "Fallo de conexión",
-    stateIdle: "Listo",
-    stateIdleHint: "Esperando la próxima interacción.",
-    stateListening: "Escuchando",
-    stateListeningHint: "Capturando tu voz en tiempo real.",
-    stateThinking: "Procesando",
-    stateThinkingHint: "Analizando contexto y preparando respuesta.",
-    stateSpeaking: "Respondiendo",
-    stateSpeakingHint: "El agente está respondiendo en tiempo real.",
-    stateInterrupted: "Interrumpido",
-    stateInterruptedHint: "Interrupción detectada. Ajustando respuesta.",
-    stateError: "Error",
-    stateErrorHint: "No se pudo completar este paso.",
-    contextPending: "Pendiente",
-    contextNoPending: "No pendiente",
-    contextYes: "Sí",
-    contextNo: "No",
-    welcomeAssistant:
-      "¡Hola! Para agendar pediré tu nombre, el asunto, tu correo y la fecha/hora. También puedo listar, reagendar o cancelar. No leo enlaces del calendario en voz alta.",
-    logConnecting: "Conectando con Agora...",
-    logAlreadyConnected: "Ya conectado al canal de Agora.",
-    logAgoraStepSession: "1/3 Pidiendo token al backend…",
-    logAgoraStepJoin: "2/3 Entrando al canal RTC…",
-    logAgoraStepMic: "3/3 Preparando micrófono (solo publica al pulsar voz)…",
-    logConnected: "Agora conectada en el canal",
-    logRemoteUserJoined: "RTC: participante remoto entró — uid=%s (esperado: agente CAE).",
-    logRemoteAudio: "Audio remoto activo",
-    logCaeTtsPlaying:
-      "TTS CAE (Agora): audio remoto del agente — voz sintetizada por Conversational AI en el canal RTC.",
-    logCaeActive: "CAE activo. Pulsa el botón de voz para publicar el micrófono (push-to-talk).",
-    logCaeSpeakHint:
-      "CAE: sin pulsar voz, tu audio no está en el canal. Con el botón activo, habla; el TTS del agente viene del CAE. El STT local solo actualiza texto en el servidor.",
-    logCaeLocalRecord:
-      "CAE activo: captura local para STT; el CAE escucha solo mientras el botón de voz está activo.",
-    logCaeFallback:
-      "El agente de voz CAE no entró al canal (falló el join en Agora). Si en el servidor ves HTTP 429 o «vendor capacity», hay cola/capacidad del TTS — recarga la página más tarde o cambia AGORA_CAE_TTS_VENDOR. El chat por texto sigue funcionando.",
-    logCaeRemoteAudioOk:
-      "RTC: primer audio publicado por el agente CAE (uid=%s).",
-    logCaeNoRemoteAudioDiagnostic:
-      "Error (audio RTC): tras %TIME% s no hubo «user-published» de audio del agente CAE (uid esperado %UID%). " +
-      "Causas probables: CAE/TTS inactivo, micrófono no publicado en el canal, o fallo Agora/ElevenLabs. Revise logs del servidor y consola.",
-    logAutoplayBlocked:
-      "Autoplay bloqueado: el audio del agente CAE llegó, pero el navegador exige un clic. Usa «Activar audio del agente».",
-    logAudioPlayFailed: "Error al reproducir audio remoto",
-    audioUnlockText:
-      "El navegador puede bloquear el audio remoto (autoplay). Toca el botón para oír al agente CAE en RTC.",
-    audioUnlockBtn: "Activar audio del agente",
-    logAudioResumed: "Audio remoto reanudado tras el clic (política de autoplay).",
-    logMicError: "Fallo de micrófono",
-    logVoiceError: "Fallo en captura de voz",
-    logBackendError: "Fallo del backend",
-    logTypeMessage: "Escribe un mensaje antes de enviar.",
-    errorPopupTitle: "Error",
-    errorPopupUnknown: "Ocurrió un error sin mensaje detallado.",
-    errorPopupClose: "Cerrar",
-    sttTooShort: "Grabación demasiado corta. Mantén pulsado el botón de voz un poco más, o escribe en el chat.",
-    errHtmlInsteadOfApi:
-      "El servidor devolvió HTML (p. ej. «Page not found» de Netlify) en lugar de la API JSON.\n\n" +
-      "• Netlify: Site → Environment variables → SCHEDULER_API_BASE = URL pública del FastAPI (sin barra final) y nuevo deploy.\n" +
-      "• Local: mismo origen que uvicorn o window.__SCHEDULER_API_BASE__ = 'http://127.0.0.1:8000' antes de app.js.",
   },
 };
 
@@ -502,19 +408,16 @@ function parseJsonResponse(text, context) {
 }
 
 function getSpeechLocaleFromUi() {
-  if (uiLocale === "es-419") return "es-ES";
   return uiLocale;
 }
 
 function getBackendLangFromUi() {
-  if (uiLocale === "es-419") return "es-ES";
   return uiLocale;
 }
 
 /** Idioma da conversa no backend (pt/en/es), alinhado ao seletor da interface. */
 function getConversationLangFromUi() {
   if (uiLocale.startsWith("en")) return "en";
-  if (uiLocale.startsWith("es")) return "es";
   return "pt";
 }
 
@@ -593,7 +496,7 @@ function logCaeVoiceSource(caePayload) {
 
 async function fetchAndLogCaeVoiceSource(language) {
   try {
-    const qLang = encodeURIComponent(language || "pt-BR");
+    const qLang = encodeURIComponent(language || "en-US");
     const response = await fetchWithTimeout(apiUrl(`/api/cae/agent/voice/source?language=${qLang}`), {}, 10000);
     const text = await response.text();
     if (!response.ok) {
@@ -1334,7 +1237,7 @@ async function sendMessage(message) {
       throw new Error("Final payload missing.");
     }
 
-    currentLanguage = finalPayload.language === "en" ? "en-US" : finalPayload.language === "es" ? "es-ES" : "pt-BR";
+    currentLanguage = finalPayload.language === "en" ? "en-US" : "pt-BR";
     streamBubble.set(finalPayload.response_text);
     setContextState({
       sessionId: finalPayload.session_id || sessionId,

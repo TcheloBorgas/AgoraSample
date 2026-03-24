@@ -5,121 +5,36 @@ Erros explícitos: unknown_intent, falhas de LLM, etc.
 """
 
 
-def _missing_phrases_pt(fields: list[str]) -> list[str]:
-    order = (
-        "organizer_name",
-        "organizer_email",
-        "title",
-        "start",
-        "duration_minutes",
-        "participants",
-        "target_meeting",
-        "new_start",
-    )
-    labels = {
-        "organizer_name": "o seu nome completo",
-        "organizer_email": "o seu e-mail (para o convite)",
-        "title": "o assunto da reunião (nome do evento no calendário)",
-        "start": "a data e o horário",
-        "duration_minutes": "a duração em minutos",
-        "participants": "os participantes por e-mail (se houver)",
-        "target_meeting": "qual reunião (título, horário ou participantes)",
-        "new_start": "o novo horário para reagendar",
-    }
-    seen = set()
-    out: list[str] = []
-    for key in order:
-        if key in fields and key not in seen:
-            seen.add(key)
-            out.append(labels.get(key, key))
-    for f in fields:
-        if f not in seen:
-            out.append(labels.get(f, f))
-    return out
-
-
-def _missing_phrases_es(fields: list[str]) -> list[str]:
-    order = (
-        "organizer_name",
-        "organizer_email",
-        "title",
-        "start",
-        "duration_minutes",
-        "participants",
-        "target_meeting",
-        "new_start",
-    )
-    labels = {
-        "organizer_name": "tu nombre completo",
-        "organizer_email": "tu correo electrónico (para la invitación)",
-        "title": "el asunto o título de la reunión",
-        "start": "la fecha y la hora",
-        "duration_minutes": "la duración en minutos",
-        "participants": "los participantes por correo (si los hay)",
-        "target_meeting": "qué reunión (título, hora o participantes)",
-        "new_start": "la nueva hora para reagendar",
-    }
-    seen = set()
-    out: list[str] = []
-    for key in order:
-        if key in fields and key not in seen:
-            seen.add(key)
-            out.append(labels.get(key, key))
-    for f in fields:
-        if f not in seen:
-            out.append(labels.get(f, f))
-    return out
-
-
-def _missing_phrases_en(fields: list[str]) -> list[str]:
-    order = (
-        "organizer_name",
-        "organizer_email",
-        "title",
-        "start",
-        "duration_minutes",
-        "participants",
-        "target_meeting",
-        "new_start",
-    )
-    labels = {
-        "organizer_name": "your full name",
-        "organizer_email": "your email (for the invite)",
-        "title": "the meeting subject/title (event name in the calendar)",
-        "start": "the date and time",
-        "duration_minutes": "the duration in minutes",
-        "participants": "participant emails (if any)",
-        "target_meeting": "which meeting (title, time, or participants)",
-        "new_start": "the new time for the reschedule",
-    }
-    seen = set()
-    out: list[str] = []
-    for key in order:
-        if key in fields and key not in seen:
-            seen.add(key)
-            out.append(labels.get(key, key))
-    for f in fields:
-        if f not in seen:
-            out.append(labels.get(f, f))
-    return out
-
-
-def _join_need_list(phrases: list[str], language: str) -> str:
-    if not phrases:
+def _first_missing_slot(fields: list[str], intent: str) -> str:
+    """Escolhe o próximo campo a pedir (ordem fixa), mesmo que `missing_fields` venha noutra ordem."""
+    if not fields:
         return ""
-    if len(phrases) == 1:
-        return phrases[0]
+    if intent == "create_meeting":
+        order = (
+            "organizer_name",
+            "organizer_email",
+            "title",
+            "start",
+            "duration_minutes",
+            "participants",
+        )
+    elif intent in {"reschedule_meeting", "cancel_meeting"}:
+        order = ("target_meeting", "new_start")
+    else:
+        return fields[0]
+    want = set(fields)
+    for key in order:
+        if key in want:
+            return key
+    return fields[0]
+
+
+def _step_by_step_prefix(language: str) -> str:
+    if language == "es":
+        return "Vamos paso a paso — una sola respuesta por turno funciona mejor con voz. "
     if language == "en":
-        if len(phrases) == 2:
-            return f"{phrases[0]} and {phrases[1]}"
-        return ", ".join(phrases[:-1]) + f", and {phrases[-1]}"
-    # pt / es — usar «e» / «y»
-    if len(phrases) == 2:
-        conj = " e " if language == "pt" else " y "
-        return f"{phrases[0]}{conj}{phrases[1]}"
-    conj = ", " if language == "pt" else ", "
-    last = " e " if language == "pt" else " y "
-    return conj.join(phrases[:-1]) + last + phrases[-1]
+        return "Let's go one question at a time — that works better for voice. "
+    return "Vamos passo a passo — uma resposta de cada vez funciona melhor por voz. "
 
 
 class FallbackService:
@@ -132,88 +47,80 @@ class FallbackService:
                 return "Could you clarify what you would like to do with this meeting?"
             return "Pode detalhar um pouco mais o que deseja fazer com esta reunião?"
 
-        # Vários campos: tom natural (sem nomes técnicos de intenção).
-        if len(fields) > 1:
-            if language == "es":
-                need = _join_need_list(_missing_phrases_es(fields), "es")
-                return (
-                    f"Perfecto. Para dejar la reunión registrada en el calendario, aún me falta: {need}. "
-                    "¿Puedes enviarlos en un mensaje?"
-                )
-            if language == "en":
-                need = _join_need_list(_missing_phrases_en(fields), "en")
-                return (
-                    f"Got it. To add this meeting to your calendar, I still need: {need}. "
-                    "Could you send them in one message?"
-                )
-            need = _join_need_list(_missing_phrases_pt(fields), "pt")
-            return (
-                f"Perfeito. Para marcar a reunião no calendário, ainda preciso de {need}. "
-                "Pode enviar numa única mensagem?"
-            )
-
-        # Um campo: pergunta direcionada (melhor fluxo passo a passo).
-        f0 = fields[0]
+        f0 = _first_missing_slot(fields, intent)
+        prefix = _step_by_step_prefix(language) if len(fields) > 1 else ""
         if language == "es":
             if f0 == "organizer_name":
-                return "Para agendar con claridad, ¿cuál es tu nombre completo?"
+                return prefix + "Para agendar con claridad, ¿cuál es tu nombre completo?"
             if f0 == "organizer_email":
-                return "¿Cuál es tu correo para la invitación al calendario?"
+                return prefix + "¿Cuál es tu correo para la invitación al calendario?"
             if f0 == "title":
-                return "¿Cuál es el asunto o título de esta reunión?"
+                return prefix + "¿Cuál es el asunto o título de esta reunión?"
             if f0 == "start":
-                return "¿En qué fecha y hora quieres la reunión? Por ejemplo: mañana a las 15 o 19/03 14:30."
+                return prefix + "¿En qué fecha y hora quieres la reunión? Por ejemplo: mañana a las 15 o 19/03 14:30."
+            if f0 == "duration_minutes":
+                return prefix + "¿Cuántos minutos debe durar la reunión? (por ejemplo: 30 o 60.)"
+            if f0 == "participants":
+                return prefix + "¿Quieres invitar a alguien por correo? Di los correos o di «ninguno»."
             if f0 == "target_meeting":
-                return "¿Puedes decirme cuál reunión quieres usar? Si puedes, menciona horario o participantes."
+                return prefix + "¿Puedes decirme cuál reunión quieres usar? Si puedes, menciona horario o participantes."
             if f0 == "new_start":
-                return "Entendido. ¿Para qué nuevo horario deseas reagendar?"
-            return "¿Puedes explicarme un poco mejor lo que deseas hacer con esta reunión?"
+                return prefix + "Entendido. ¿Para qué nuevo horario deseas reagendar?"
+            return prefix + "¿Puedes explicarme un poco mejor lo que deseas hacer con esta reunión?"
 
         if language == "en":
             if f0 == "organizer_name":
-                return "To schedule this properly, what is your full name?"
+                return prefix + "To schedule this properly, what is your full name?"
             if f0 == "organizer_email":
-                return "What email should I use for the calendar invite?"
+                return prefix + "What email should I use for the calendar invite?"
             if f0 == "title":
-                return "What is the subject or title of this meeting? It will appear as the event name in the calendar."
+                return prefix + "What is the subject or title of this meeting? It will appear as the event name in the calendar."
             if f0 == "start":
-                return "What date and time should the meeting be? For example: tomorrow at 3 PM or 2026-03-19 19:00."
+                return prefix + "What date and time should the meeting be? For example: tomorrow at 3 PM or 2026-03-19 19:00."
+            if f0 == "duration_minutes":
+                return prefix + "How long should the meeting be, in minutes? (e.g. 30 or 60.)"
+            if f0 == "participants":
+                return prefix + "Should I invite anyone by email? Share their addresses, or say none."
             if f0 == "target_meeting":
-                return "Which meeting should I use? Please mention time or participants."
+                return prefix + "Which meeting should I use? Please mention time or participants."
             if f0 == "new_start":
-                return "What is the new time for the reschedule?"
-            return "Could you clarify your meeting request?"
+                return prefix + "What is the new time for the reschedule?"
+            return prefix + "Could you clarify your meeting request?"
 
         if f0 == "organizer_name":
-            return "Para agendar com segurança, qual é o seu nome completo?"
+            return prefix + "Para agendar com segurança, qual é o seu nome completo?"
         if f0 == "organizer_email":
-            return "Qual é o seu e-mail para o convite da reunião?"
+            return prefix + "Qual é o seu e-mail para o convite da reunião?"
         if f0 == "title":
-            return "Qual é o assunto desta reunião? Esse texto será o nome do evento no calendário (por exemplo: Alinhamento comercial, Revisão de sprint)."
+            return prefix + "Qual é o assunto desta reunião? Esse texto será o nome do evento no calendário (por exemplo: Alinhamento comercial, Revisão de sprint)."
         if f0 == "start":
-            return "Em qual data e horário você quer a reunião? Por exemplo: amanhã às 15h ou 19/03 14:30."
+            return prefix + "Em qual data e horário você quer a reunião? Por exemplo: amanhã às 15h ou 19/03 14:30."
+        if f0 == "duration_minutes":
+            return prefix + "Quantos minutos deve durar a reunião? (por exemplo: 30 ou 60.)"
+        if f0 == "participants":
+            return prefix + "Quer convidar alguém por e-mail? Diga os e-mails ou diga «ninguém»."
         if f0 == "target_meeting":
-            return "Pode me dizer qual reunião você quer usar? Se puder, cite horário ou participantes."
+            return prefix + "Pode me dizer qual reunião você quer usar? Se puder, cite horário ou participantes."
         if f0 == "new_start":
-            return "Certo. Para qual novo horário você deseja reagendar?"
-        return "Pode me explicar um pouco melhor o que você deseja fazer com essa reunião?"
+            return prefix + "Certo. Para qual novo horário você deseja reagendar?"
+        return prefix + "Pode me explicar um pouco melhor o que você deseja fazer com essa reunião?"
 
     def misplaced_confirm_yes_during_booking(self, missing_fields: list[str], language: str) -> str:
         """Utilizador disse 'sim' mas ainda faltam dados do rascunho — pedir o que falta, sem tratar como erro grosseiro."""
         next_q = self.clarify_missing("create_meeting", missing_fields, language)
         if language == "es":
             hint = (
-                "Aún no hay confirmación final en el calendario: primero necesito esos datos. "
+                "Aún no hay confirmación en el calendario: primero terminemos los datos, uno por uno. "
                 "Cuando muestre el resumen y pregunte si confirmas, entonces di sí o no."
             )
         elif language == "en":
             hint = (
-                "There is no final calendar confirmation yet — I still need the details above first. "
+                "The meeting is not booked yet — let's finish the details one question at a time first. "
                 "When I show the full summary and ask you to confirm, then say yes or no."
             )
         else:
             hint = (
-                "Ainda não há confirmação final da reunião no calendário — primeiro preciso dos dados acima. "
+                "A reunião ainda não está confirmada no calendário — primeiro vamos completar os dados, um de cada vez. "
                 "Quando eu mostrar o resumo completo e perguntar se pode confirmar, use sim ou não."
             )
         return f"{next_q}\n\n{hint}"
