@@ -168,15 +168,15 @@ class CAEService:
         vendor = (tts_cfg.get("vendor") or "").lower()
         p = tts_cfg.get("params") or {}
         out: dict[str, Any] = {"pipeline": "cae_tts", "vendor": vendor}
-        if vendor == "openai":
-            out["model"] = p.get("model")
-            out["voice"] = p.get("voice")
-        elif vendor == "elevenlabs":
+        # if vendor == "openai":
+        #     out["model"] = p.get("model")
+        #     out["voice"] = p.get("voice")
+        if vendor == "elevenlabs":
             out["model_id"] = p.get("model_id")
             out["voice_id"] = p.get("voice_id")
-        elif vendor == "microsoft":
-            out["region"] = p.get("region")
-            out["voice_name"] = p.get("voice_name")
+        # elif vendor == "microsoft":
+        #     out["region"] = p.get("region")
+        #     out["voice_name"] = p.get("voice_name")
         return out
 
     def describe_tts_public(self, language: str) -> dict[str, Any]:

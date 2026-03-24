@@ -21,6 +21,7 @@ router = APIRouter(prefix="/api/cae", tags=["cae"])
 logger = logging.getLogger(__name__)
 _LOG_THROTTLE_SEC = 2.0
 _last_log_by_key: dict[str, float] = {}
+_last_reply_by_session: dict[str, dict[str, Any]] = {}
 
 _FAILURE_SNIPPETS_PT = (
     "não consegui obter resposta",
@@ -57,6 +58,32 @@ def _should_emit_log(key: str, window_sec: float = _LOG_THROTTLE_SEC) -> bool:
 def _wants_streaming_llm(payload: dict[str, Any]) -> bool:
     """Agora CAE envia stream=true; sem SSE estilo OpenAI o motor marca llm failure e fala failure_message."""
     return bool(payload.get("stream"))
+
+
+def _payload_turn_id(payload: dict[str, Any]) -> int | None:
+    val = payload.get("turn_id")
+    try:
+        return int(val) if val is not None else None
+    except Exception:
+        return None
+
+
+def _is_duplicate_turn(session_id: str, turn_id: int | None, user_text: str) -> bool:
+    if turn_id is None:
+        return False
+    prev = _last_reply_by_session.get(session_id)
+    if not prev:
+        return False
+    return prev.get("turn_id") == turn_id and (prev.get("user_text") or "") == (user_text or "")
+
+
+def _remember_turn_reply(session_id: str, turn_id: int | None, user_text: str, out_text: str) -> None:
+    _last_reply_by_session[session_id] = {
+        "turn_id": turn_id,
+        "user_text": user_text or "",
+        "out_text": out_text or "",
+        "ts": time.monotonic(),
+    }
 
 
 async def _openai_chat_completion_sse(
@@ -215,7 +242,41 @@ async def cae_llm_callback(
                 _json_for_log(payload, max_len=3000),
             )
 
+        turn_id = _payload_turn_id(payload)
         user_text = _extract_user_text(payload)
+        if _is_duplicate_turn(session_id, turn_id, user_text):
+            prev_text = (_last_reply_by_session.get(session_id) or {}).get("out_text") or ""
+            logger.info(
+                "CAE_LLM turn duplicado ignorado session_id=%s turn_id=%s len_user_text=%s",
+                session_id,
+                turn_id,
+                len(user_text or ""),
+            )
+            stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
+            include_usage = bool(stream_opts.get("include_usage"))
+            if _wants_streaming_llm(payload):
+                return StreamingResponse(
+                    _openai_chat_completion_sse(prev_text, include_usage=include_usage),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "Connection": "keep-alive",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+            return {
+                "id": f"chatcmpl-{int(time.time())}",
+                "object": "chat.completion",
+                "created": int(time.time()),
+                "model": "local-scheduler-agent",
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {"role": "assistant", "content": prev_text},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
         if not (user_text or "").strip():
             # ASR vazio: não inventar frase que o classificador interpreta como mudança de idioma (ex.: "português" → set_language).
             out_empty = "Não ouvi bem desta vez. Pode repetir em uma frase?"
@@ -223,6 +284,7 @@ async def cae_llm_callback(
             stream_opts = payload.get("stream_options") if isinstance(payload.get("stream_options"), dict) else {}
             include_usage = bool(stream_opts.get("include_usage"))
             if _wants_streaming_llm(payload):
+                _remember_turn_reply(session_id, turn_id, user_text, out_empty)
                 return StreamingResponse(
                     _openai_chat_completion_sse(out_empty, include_usage=include_usage),
                     media_type="text/event-stream",
@@ -232,6 +294,7 @@ async def cae_llm_callback(
                         "X-Accel-Buffering": "no",
                     },
                 )
+            _remember_turn_reply(session_id, turn_id, user_text, out_empty)
             return {
                 "id": f"chatcmpl-{int(time.time())}",
                 "object": "chat.completion",
@@ -282,6 +345,7 @@ async def cae_llm_callback(
         include_usage = bool(stream_opts.get("include_usage"))
 
         if _wants_streaming_llm(payload):
+            _remember_turn_reply(session_id, turn_id, user_text, out_text)
             logger.info(
                 "CAE_LLM resposta modo STREAM (chat.completion.chunk + SSE); Agora enviou stream=true. "
                 "session_id=%s intent=%s response_len=%s include_usage=%s elapsed_ms=%.2f",
@@ -314,6 +378,7 @@ async def cae_llm_callback(
                 }
             ],
         }
+        _remember_turn_reply(session_id, turn_id, user_text, out_text)
         logger.info(
             "CAE_LLM POST sucesso (JSON nao-stream) session_id=%s intent=%s needs_confirmation=%s response_len=%s "
             "elapsed_ms=%.2f body_out=%s",
@@ -381,16 +446,45 @@ def mcp_tools_gateway(
 
 def _extract_user_text(payload: dict[str, Any]) -> str:
     messages = payload.get("messages", [])
+    payload_turn_id = _payload_turn_id(payload)
+
+    # Primeiro tenta extrair o conteúdo do mesmo turn_id enviado no payload.
+    if payload_turn_id is not None:
+        for message in reversed(messages):
+            if message.get("role") != "user":
+                continue
+            try:
+                msg_turn_id = int(message.get("turn_id")) if message.get("turn_id") is not None else None
+            except Exception:
+                msg_turn_id = None
+            if msg_turn_id != payload_turn_id:
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                if content.strip():
+                    return content
+                continue
+            if isinstance(content, list):
+                for block in content:
+                    if block.get("type") == "text":
+                        txt = block.get("text", "")
+                        if isinstance(txt, str) and txt.strip():
+                            return txt
+
+    # Fallback: último texto de usuário não-vazio.
     for message in reversed(messages):
         if message.get("role") != "user":
             continue
         content = message.get("content")
         if isinstance(content, str):
-            return content
+            if content.strip():
+                return content
         if isinstance(content, list):
             for block in content:
                 if block.get("type") == "text":
-                    return block.get("text", "")
+                    txt = block.get("text", "")
+                    if isinstance(txt, str) and txt.strip():
+                        return txt
     return ""
 
 

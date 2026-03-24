@@ -30,7 +30,9 @@ let remoteAudioPublishBurstStartTs = new Map();
 /** Evita subscribe/play em rajada para o mesmo uid. */
 let remoteAudioSubscribeInFlightByUid = new Map();
 let remoteAudioLastSubscribeAtByUid = new Map();
+let remoteAudioLastPlayAtByUid = new Map();
 const REMOTE_AUDIO_MIN_SUBSCRIBE_INTERVAL_MS = 700;
+const REMOTE_AUDIO_MIN_REPLAY_INTERVAL_MS = 5000;
 const RTC_EVENT_LOG_THROTTLE_MS = 1500;
 const rtcAudioEventStatsByUid = new Map();
 
@@ -42,6 +44,7 @@ function clearRemoteAudioPublishDebouncers() {
   remoteAudioPublishBurstStartTs.clear();
   remoteAudioSubscribeInFlightByUid.clear();
   remoteAudioLastSubscribeAtByUid.clear();
+  remoteAudioLastPlayAtByUid.clear();
   rtcAudioEventStatsByUid.clear();
 }
 
@@ -121,6 +124,13 @@ function stopRemoteAudioTrackIfAny(track) {
   } catch (_e) {
     /* track já libertado */
   }
+}
+
+function isSameTrackReplayTooSoon(uidStr, track) {
+  const prevTrack = lastRemoteAudioTrackByUid.get(uidStr);
+  if (!prevTrack || prevTrack !== track) return false;
+  const lastPlayAt = remoteAudioLastPlayAtByUid.get(uidStr) || 0;
+  return Date.now() - lastPlayAt < REMOTE_AUDIO_MIN_REPLAY_INTERVAL_MS;
 }
 
 function pruneRemoteAudioTracksFromClient() {
@@ -603,6 +613,33 @@ function logCaeVoiceSource(caePayload) {
   log(`Fonte da voz CAE no RTC: vendor=${vendor}${details.length ? ` (${details.join(", ")})` : ""}.`);
 }
 
+async function fetchAndLogCaeVoiceSource(language) {
+  try {
+    const qLang = encodeURIComponent(language || "pt-BR");
+    const response = await fetchWithTimeout(apiUrl(`/api/cae/agent/voice/source?language=${qLang}`), {}, 10000);
+    const text = await response.text();
+    if (!response.ok) {
+      log(`Diagnóstico de voz CAE falhou (${response.status}).`);
+      return;
+    }
+    const data = parseJsonResponse(text, "CAE voice source");
+    const tts = data?.cae_tts || {};
+    const vendor = String(tts.vendor || "unknown").toLowerCase();
+    const details = [];
+    if (tts.voice) details.push(`voice=${tts.voice}`);
+    if (tts.voice_id) details.push(`voice_id=${tts.voice_id}`);
+    if (tts.model) details.push(`model=${tts.model}`);
+    if (tts.model_id) details.push(`model_id=${tts.model_id}`);
+    if (tts.region) details.push(`region=${tts.region}`);
+    log(`Diagnóstico backend TTS: vendor=${vendor}${details.length ? ` (${details.join(", ")})` : ""}.`);
+    if (vendor !== "elevenlabs") {
+      log("ALERTA: vendor de voz ativo não é ElevenLabs.");
+    }
+  } catch (err) {
+    log(`Diagnóstico de voz CAE indisponível: ${err?.message || err}`);
+  }
+}
+
 async function setRtcMicCaptureEnabled(enabled) {
   if (!localTrack || typeof localTrack.setEnabled !== "function") return;
   try {
@@ -734,6 +771,9 @@ async function applyRemoteUserAudioPublished(uidStr) {
   if (currentTrack && prevTrack === currentTrack && tooSoon) {
     return;
   }
+  if (currentTrack && isSameTrackReplayTooSoon(uidStr, currentTrack)) {
+    return;
+  }
   try {
     await agoraClient.subscribe(user, "audio");
     remoteAudioLastSubscribeAtByUid.set(uidStr, Date.now());
@@ -755,7 +795,7 @@ async function applyRemoteUserAudioPublished(uidStr) {
     return;
   }
   const uidForPlay = remote?.uid ?? user.uid;
-  if (lastRemoteAudioTrackByUid.get(uidStr) === track) {
+  if (isSameTrackReplayTooSoon(uidStr, track)) {
     return;
   }
   markCaeAgentAudioPublished(uidForPlay);
@@ -770,6 +810,9 @@ async function applyRemoteUserAudioPublished(uidStr) {
   const playedOk = await playRemoteAudioTrack(track, uidForPlay);
   if (!playedOk) {
     lastRemoteAudioTrackByUid.delete(uidStr);
+    remoteAudioLastPlayAtByUid.delete(uidStr);
+  } else {
+    remoteAudioLastPlayAtByUid.set(uidStr, Date.now());
   }
   })();
   remoteAudioSubscribeInFlightByUid.set(uidStr, run);
@@ -1017,8 +1060,8 @@ async function connectAgora() {
   try {
     try {
       if (window.AgoraRTC && typeof AgoraRTC.setLogLevel === "function") {
-        // Reduz ruído no console do browser (DEBUG/INFO do SDK).
-        AgoraRTC.setLogLevel(2);
+        // Reduz ruído no console do browser (prioriza WARNING/ERROR).
+        AgoraRTC.setLogLevel(1);
       }
     } catch (_e) {
       /* noop */
@@ -1127,6 +1170,7 @@ async function connectAgora() {
       if (caeActive) {
         log(t("logCaeActive"));
         log(t("logCaeSpeakHint"));
+        await fetchAndLogCaeVoiceSource(getBackendLangFromUi());
         scheduleCaeRemoteAudioWatchdog();
         const uidForSync = expectedCaeAgentUid;
         setTimeout(() => trySyncSubscribeCaeAgentAudio(uidForSync), 0);
